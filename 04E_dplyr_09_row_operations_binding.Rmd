@@ -1,0 +1,547 @@
+---
+title: "04E - dplyr 9: Row Operations and Binding"
+author: "Piotr Kosowski"
+date: "2026-03-09"
+output: pdf_document
+---
+
+# Introduction
+
+In earlier notebooks you learned filtering, transforming, grouping, and joining.
+Another common task in real projects is managing rows directly:
+
+1.  stacking data from multiple files,
+2.  adding corrections,
+3.  updating selected records,
+4.  removing invalid records,
+5.  checking if row-level changes are correct.
+
+This notebook focuses on practical row operations in `dplyr` that are very useful in day-to-day analysis.
+
+---
+
+# Part I - Theory
+
+## 1. When to use row operations instead of joins
+
+Use row operations when your primary goal is to add, update, patch, or remove records.
+
+A quick guide:
+
+1.  use joins when you want to add columns from another table,
+2.  use `bind_rows()` when you want to stack tables vertically,
+3.  use `rows_*()` when you want database-like row changes by key.
+
+---
+
+## 2. Setup: small teaching tables
+
+```{r}
+library(dplyr)
+
+jan_sales <- tibble(
+  order_id = c(1001, 1002, 1003),
+  customer_id = c("C01", "C02", "C03"),
+  amount = c(120, 80, 150),
+  status = c("paid", "pending", "paid")
+)
+
+feb_sales <- tibble(
+  order_id = c(1004, 1005, 1006),
+  customer_id = c("C01", "C04", "C05"),
+  amount = c(95, 210, 60),
+  status = c("paid", "paid", "returned")
+)
+
+jan_sales
+feb_sales
+```
+
+These two tables have the same structure, so they are perfect for row binding.
+
+---
+
+## 3. `bind_rows()` - stack tables vertically
+
+`bind_rows()` adds rows from one table under another.
+
+```{r}
+all_sales <- bind_rows(jan_sales, feb_sales)
+all_sales
+```
+
+If columns are not identical, `bind_rows()` creates missing values (`NA`) where needed.
+
+```{r}
+feb_sales_extra <- feb_sales %>%
+  mutate(channel = c("online", "store", "online"))
+
+bind_rows(jan_sales, feb_sales_extra)
+```
+
+---
+
+## 4. Track data source with `.id`
+
+When combining many datasets, it is useful to keep source information.
+
+```{r}
+bind_rows(
+  January = jan_sales,
+  February = feb_sales,
+  .id = "source_month"
+)
+```
+
+This creates a new column that remembers where each row came from.
+
+---
+
+## 5. `bind_cols()` - combine by position (careful)
+
+`bind_cols()` joins tables side by side by row position, not by key.
+
+```{r}
+order_flags <- tibble(
+  is_large = c(FALSE, FALSE, TRUE),
+  needs_review = c(FALSE, TRUE, FALSE)
+)
+
+bind_cols(jan_sales, order_flags)
+```
+
+Important warning:
+
+1.  row counts must match,
+2.  row order must already be aligned,
+3.  if order is not aligned, result can be incorrect.
+
+In many analytic tasks, key-based joins are safer than `bind_cols()`.
+
+---
+
+## 6. `rows_append()` - add new rows
+
+`rows_append()` adds rows from `y` to `x`.
+
+```{r}
+customers_master <- tibble(
+  customer_id = c("C01", "C02", "C03"),
+  email = c("anna@example.com", "bartek@example.com", NA),
+  city = c("Krakow", "Gdansk", "Warsaw")
+)
+
+new_customers <- tibble(
+  customer_id = c("C04", "C05"),
+  email = c("ewa@example.com", "filip@example.com"),
+  city = c("Poznan", "Lodz")
+)
+
+rows_append(customers_master, new_customers)
+```
+
+Use this when new records should be added.
+
+---
+
+## 7. `rows_update()` - update existing rows by key
+
+`rows_update()` modifies rows in `x` that match keys from `y`.
+
+```{r}
+email_updates <- tibble(
+  customer_id = c("C02"),
+  email = c("bartek.new@example.com"),
+  city = c("Gdansk")
+)
+
+rows_update(customers_master, email_updates, by = "customer_id")
+```
+
+Good practice:
+
+1.  keep keys unique in update table,
+2.  update only fields you really want to replace.
+
+---
+
+## 8. `rows_patch()` - fill missing values only
+
+`rows_patch()` updates only `NA` values in `x`.
+
+```{r}
+patch_data <- tibble(
+  customer_id = c("C03"),
+  email = c("celina@example.com"),
+  city = c("Warsaw")
+)
+
+rows_patch(customers_master, patch_data, by = "customer_id")
+```
+
+This is useful when you want to complete missing values without overwriting existing non-missing data.
+
+---
+
+## 9. `rows_upsert()` - update if exists, insert if new
+
+`rows_upsert()` is a practical "update or insert" operation.
+
+```{r}
+upsert_data <- tibble(
+  customer_id = c("C02", "C06"),
+  email = c("bartek.final@example.com", "gosia@example.com"),
+  city = c("Gdansk", "Wroclaw")
+)
+
+rows_upsert(customers_master, upsert_data, by = "customer_id")
+```
+
+Result:
+
+1.  `C02` is updated,
+2.  `C06` is inserted.
+
+---
+
+## 10. `rows_delete()` - remove rows by key
+
+`rows_delete()` removes rows whose keys appear in `y`.
+
+```{r}
+to_remove <- tibble(customer_id = c("C01"))
+
+rows_delete(customers_master, to_remove, by = "customer_id")
+```
+
+Use carefully and keep deletion logic explicit.
+
+---
+
+## 11. Basic validation after row operations
+
+Always check outcomes after row changes.
+
+```{r}
+updated_customers <- rows_upsert(customers_master, upsert_data, by = "customer_id")
+
+updated_customers %>%
+  summarise(
+    rows_total = n(),
+    unique_ids = n_distinct(customer_id),
+    duplicated_ids = n() - n_distinct(customer_id)
+  )
+```
+
+Also inspect unexpected keys with `anti_join()` when needed.
+
+```{r}
+upsert_data %>%
+  anti_join(customers_master, by = "customer_id")
+```
+
+This shows rows that were new (not in original table).
+
+---
+
+## 12. Common beginner mistakes and checklist
+
+Frequent mistakes:
+
+1.  using `bind_cols()` when key-based logic is needed,
+2.  forgetting key uniqueness before `rows_update()`/`rows_upsert()`,
+3.  applying updates without checking row counts,
+4.  deleting rows without keeping reproducible code.
+
+Checklist before final output:
+
+1.  Is the operation type correct (`bind`, `join`, or `rows_*`)?
+2.  Is the key column clear and unique where required?
+3.  Are row counts and key uniqueness checked after operation?
+4.  Is every change traceable in code?
+
+---
+
+# Part II - Exercises
+
+Create small tibbles in each task. Keep code explicit and readable.
+
+## Exercise 1 - Stack two monthly tables with `bind_rows()`
+
+**Goal:** combine same-structure tables.
+
+**Task:** create `month1` and `month2` with columns `id`, `amount`; then stack them.
+
+```{r}
+# Your code here
+# month1 with data
+month1 <- data.frame(
+  id = c(1, 2, 3),
+  amount = c(100.50, 200.00, 150.75)
+)
+
+# month2 with data
+month2 <- data.frame(
+  id = c(1, 2, 4),
+  amount = c(110.00, 200.00, 300.25)
+)
+
+bind_rows(month1, month2)
+```
+
+---
+
+## Exercise 2 - `bind_rows()` with non-identical columns
+
+**Goal:** see how missing columns become `NA`.
+
+**Task:** add extra column `channel` only to second table and stack both tables.
+
+```{r}
+# Your code here
+# month1 with data
+month1 <- data.frame(
+  id = c(1, 2, 3),
+  amount = c(100.50, 200.00, 150.75)
+)
+
+# month2 with data
+month2 <- data.frame(
+  id = c(1, 2, 4),
+  amount = c(110.00, 200.00, 300.25),
+  channel = c(1, 2, 3)
+)
+
+bind_rows(month1, month2)
+```
+
+---
+
+## Exercise 3 - Track source with `.id`
+
+**Goal:** keep origin of each row.
+
+**Task:** bind two named tables and create source column `source_batch`.
+
+```{r}
+# Your code here
+# month1 with data
+month1 <- data.frame(
+  id = c(1, 2, 3),
+  amount = c(100.50, 200.00, 150.75)
+)
+
+# month2 with data
+month2 <- data.frame(
+  id = c(1, 2, 4),
+  amount = c(110.00, 200.00, 300.25)
+)
+
+bind_rows(
+  Month1 = month1,
+  Month2 = month2,
+  .id = "source_month"
+)
+```
+
+---
+
+## Exercise 4 - Side-by-side combination with `bind_cols()`
+
+**Goal:** combine aligned tables by position.
+
+**Task:** create a 3-row sales table and a 3-row flags table, then bind columns.
+
+```{r}
+# Your code here
+sales <- data.frame(
+  id = c(101, 102, 103),
+  product = c("Widget A", "Widget B", "Widget C"),
+  amount = c(45.99, 120.00, 89.50),
+  date = as.Date(c("2024-01-01", "2024-01-02", "2024-01-03"))
+)
+
+flags <- data.frame(
+  id = c(101, 102, 103),
+  is_active = c(TRUE, TRUE, FALSE),
+  is_priority = c(FALSE, TRUE, FALSE),
+  status_code = c("OK", "OK", "REVIEW")
+)
+
+bind_cols(sales, flags)
+```
+
+---
+
+## Exercise 5 - Add new rows with `rows_append()`
+
+**Goal:** append new records to master table.
+
+**Task:** create customer master and new customers table; append rows.
+
+```{r}
+# Your code here
+customer_master <- data.frame(
+  cust_id = c(1001, 1002, 1003),
+  name = c("Alice Johnson", "Bob Smith", "Charlie Davis"),
+  email = c("alice@example.com", NA, "charlie@example.com"),
+  total_spend = c(450.25, 1200.00, 0.00),
+  stringsAsFactors = FALSE
+)
+
+new_customers <- data.frame(
+  cust_id = c(1004, 1005, 1006),
+  name = c("Diana Prince", "Edward Norton", "Fiona Gallagher"),
+  email = c("diana@example.com", "edward@example.com", "fiona@example.com"),
+  total_spend = c(50.00, 0.00, 85.20),
+  stringsAsFactors = FALSE
+)
+
+rows_append(customer_master, new_customers)
+customer_master
+```
+
+---
+
+## Exercise 6 - Update existing rows with `rows_update()`
+
+**Goal:** modify selected rows by key.
+
+**Task:** update email for one existing customer using key `customer_id`.
+
+```{r}
+# Your code here
+update_row <- tibble(
+  cust_id = c(1001),
+  email = c("alice_update@gmail.com")
+)
+
+rows_update(customer_master, update_row, by = "cust_id")
+```
+
+---
+
+## Exercise 7 - Patch missing values with `rows_patch()`
+
+**Goal:** fill missing fields without overwriting non-missing data.
+
+**Task:** in master table with missing email, patch only that missing value.
+
+```{r}
+# Your code here
+patch_row <- tibble(
+  cust_id = c(1002),
+  email = c("patched_email@gmail.com")
+)
+
+rows_patch(customer_master, patch_row, by = "cust_id")
+```
+
+---
+
+## Exercise 8 - Update or insert with `rows_upsert()`
+
+**Goal:** handle mixed update+new data.
+
+**Task:** upsert one existing and one new customer by `customer_id`.
+
+```{r}
+# Your code here
+customer_master
+
+upsert_data <- tibble(
+  cust_id = c(1001, 1004),
+  email = c("updated_email@gmail.com", "new_email@gmail.com")
+)
+
+rows_upsert(customer_master, upsert_data, by = "cust_id")
+```
+
+---
+
+## Exercise 9 - Remove selected rows with `rows_delete()`
+
+**Goal:** remove rows by key list.
+
+**Task:** delete one customer from table using key column.
+
+```{r}
+# Your code here
+row_to_delete <- tibble(
+  cust_id = c(1001)
+)
+
+rows_delete(customer_master, row_to_delete, by = "cust_id")
+```
+
+---
+
+## Exercise 10 - Post-operation validation summary
+
+**Goal:** verify integrity after row changes.
+
+**Task:** after an upsert, compute row count, distinct key count, and number of duplicate keys.
+
+```{r}
+# Your code here
+update_customers <- rows_upsert(customers_master, upsert_data, by = "cust_id")
+
+updated_customers %>%
+  summarise(
+    rows_total = n(),
+    unique_ids = n_distinct(cust_id),
+    duplicated_ids = n() - n_distinct(cust_id)
+  )
+```
+
+---
+
+## Exercise 11 - Detect truly new keys
+
+**Goal:** identify rows that were not in original table.
+
+**Task:** use `anti_join()` to find keys present in update table but absent in master table.
+
+```{r}
+# Your code here
+```
+
+---
+
+## Exercise 12 - Integration pipeline
+
+**Goal:** combine row operations in one workflow.
+
+**Task:** create sales data from two months and corrections table; then:
+
+1.  stack monthly tables,
+2.  apply `rows_update()` to correct one existing order,
+3.  apply `rows_append()` to add one late order,
+4.  verify final row count and unique order count.
+
+```{r}
+# Your code here
+```
+
+---
+
+# Summary
+
+In this final dplyr notebook you practiced practical row operations:
+
+1.  stacking tables (`bind_rows`),
+2.  source tracking (`.id`),
+3.  careful side binding (`bind_cols`),
+4.  database-like row changes (`rows_append`, `rows_update`, `rows_patch`, `rows_upsert`, `rows_delete`),
+5.  validation checks after each operation.
+
+These tools are essential when data changes over time and updates arrive in batches.
+
+---
+
+# References
+
+1.  Wickham H, Francois R, Henry L, Muller K, Vaughan D. **dplyr reference**. https://dplyr.tidyverse.org/
+2.  Wickham H, Cetinkaya-Rundel M, Grolemund G. **R for Data Science (2e)**, Data transformation chapters. https://r4ds.hadley.nz/
+3.  Posit Cheatsheets. **Data transformation with dplyr**. https://posit.co/resources/cheatsheets/
+4.  Wickham H. **Advanced R (2e)**, selected sections for deeper context. https://adv-r.hadley.nz/
