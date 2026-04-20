@@ -1,0 +1,83 @@
+---
+title: "Edible Plants Dataset Analisis (TidyTuesday)"
+author: "Leonardo Cárdenas Peralta, Daniel Enrique Molina Sanglade and Enrique Fernandez Salmeron"
+date: "April-May 2026"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    theme: cosmo
+    highlight: tango
+---
+
+# Introduction
+
+## Installing libraries
+
+We start our project by installing the libraries we are going to use for accesing the dataset 
+
+```{Installing packages}
+install.packages("rmarkdown")
+install.packages("dplyr")
+install.packages("ggplot2")
+install.packages("pak")
+install.packages("janitor")
+install.packages("skimr")
+install.packages("here")
+install.packages("tidymodels")
+install.packages("performance")
+install.packages("tinytex")
+install.packages("readr")
+
+pak::pkg_install("tidyverse")
+pak::pkg_install("tidytuesdayR")
+pak::pkg_install("kableExtra")
+
+```
+
+```{Installing Tinytex}
+tinytex::install_tinytex()
+```
+
+```{Loading packages}
+library(rmarkdown)
+library(dplyr)
+library(ggplot2)
+library(tidytuesdayR)
+library(tidyverse)
+library(janitor)
+library(skimr)
+library(here)
+library(tidymodels)
+library(performance)
+library(kableExtra)
+library(readr)
+```
+
+## Downloading the dataset
+
+Now we have to downlaod the dataset to start working with it
+
+```{Option 1 to download dataset}
+tuesdata <- tidytuesdayR::tt_load('2026-02-03')
+
+edible_plants <- tuesdata$edible_plants
+```
+
+```{Option 2 to download dataset}
+edible_plants <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2026/2026-02-03/edible_plants.csv')
+edible_plants
+```
+
+```{Option 3 to download dataset (Locally)}
+# Used to upload the file to Github
+
+download.file(
+  url = 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2026/2026-02-03/edible_plants.csv',
+  destfile = "Data/edible_plants.csv"
+)
+
+# Used to have the dataset locally from Github
+
+edible_plants <- read_csv(here("data", "edible_plants.csv"))
+```
