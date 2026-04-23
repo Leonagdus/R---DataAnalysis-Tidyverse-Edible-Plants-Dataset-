@@ -12,64 +12,38 @@ output:
 
 # Introduction
 
-## Installing libraries
+# Introduction
 
-We start our project by installing the libraries we are going to use for accesing the dataset 
-
-```{Installing packages}
-install.packages("rmarkdown")
-install.packages("dplyr")
-install.packages("ggplot2")
-install.packages("pak")
-install.packages("janitor")
-install.packages("skimr")
-install.packages("here")
-install.packages("tidymodels")
-install.packages("performance")
-install.packages("tinytex")
-install.packages("readr")
-
-pak::pkg_install("tidyverse")
-pak::pkg_install("tidytuesdayR")
-pak::pkg_install("kableExtra")
-
-```
-
-```{Installing Tinytex}
-tinytex::install_tinytex()
-```
-
-```{Loading packages}
-library(rmarkdown)
-library(dplyr)
-library(ggplot2)
-library(tidytuesdayR)
+## Setup
+```{r setup, message=FALSE, warning=FALSE}
+# Cargamos las librerías necesarias para el análisis.
+# Nota: La gestión de versiones se realiza mediante renv.
 library(tidyverse)
+library(tidytuesdayR)
 library(janitor)
 library(skimr)
 library(here)
 library(tidymodels)
 library(performance)
 library(kableExtra)
-library(readr)
 ```
 
 ## Downloading the dataset
 
 Now we have to downlaod the dataset to start working with it
 
-```{Option 1 to download dataset}
+```{r Option 1}
 tuesdata <- tidytuesdayR::tt_load('2026-02-03')
 
 edible_plants <- tuesdata$edible_plants
 ```
 
-```{Option 2 to download dataset}
+```{r Option 2}
 edible_plants <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2026/2026-02-03/edible_plants.csv')
 edible_plants
 ```
 
-```{Option 3 to download dataset (Locally)}
+```{r Option 3}
 # Used to upload the file to Github
 
 download.file(
@@ -79,5 +53,5 @@ download.file(
 
 # Used to have the dataset locally from Github
 
-edible_plants <- read_csv(here("data", "edible_plants.csv"))
+edible_plants <- read_csv(here("Data", "edible_plants.csv"))
 ```
