@@ -32,18 +32,18 @@ library(kableExtra)
 
 Now we have to downlaod the dataset to start working with it
 
-```{r Option 1}
+```{r Option 1, message=FALSE, warning=FALSE}
 tuesdata <- tidytuesdayR::tt_load('2026-02-03')
 
 edible_plants <- tuesdata$edible_plants
 ```
 
-```{r Option 2}
+```{r Option 2, message=FALSE, warning=FALSE}
 edible_plants <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2026/2026-02-03/edible_plants.csv')
 edible_plants
 ```
 
-```{r Option 3}
+```{r Option 3, message=FALSE, warning=FALSE}
 # Used to upload the file to Github
 
 download.file(
@@ -54,4 +54,92 @@ download.file(
 # Used to have the dataset locally from Github
 
 edible_plants <- read_csv(here("Data", "edible_plants.csv"))
+```
+
+# Data Cleaning and Preparation
+
+In this section we clean the original dataset to correct inconsistencies and transform text variables into analyzable numerical data.
+
+```{r data cleaning, message=FALSE, warning=FALSE}
+# 1. Name normalization and cleaning
+
+# We are using janitor to parse the name of the categorical variables so they all have the same structure.
+# Then we are using tidyverse to edit the content of the columns
+edible_plants_clean <- edible_plants %>%
+  clean_names() %>%
+  mutate(across(where(is.character), ~str_trim(str_to_lower(.))))
+```
+
+```{r data cleaning, message=FALSE, warning=FALSE}
+# 2. Correcting inconsistencies and typo-errors
+# This is going to help in the misspelling of "perrenial" and "perennial"
+edible_plants_clean <- edible_plants_clean %>%
+  mutate(
+    cultivation = recode(cultivation, "brassicas" = "brassica"),
+    season = case_when(
+      str_detect(season, "perrenial|perannial") ~ "perennial",
+      str_detect(season, "biennial") ~ "biennial",
+      TRUE ~ season
+    ),
+    temperature_class = recode(temperature_class, "very hard" = "very hardy"),
+    sunlight = str_replace_all(sunlight, "full sun/partial shade/ full shade", "full sun/partial shade/full shade")
+  )
+```
+
+```{r data cleaning, message=FALSE, warning=FALSE}
+# 3. Transformation from ranges to numerico columns
+# This feature extracts numbers from strings like "55-75" or "180+"
+stats_extraction <- function(column) {
+  nums <- str_extract_all(column, "\\d+")
+  min_val <- sapply(nums, function(x) if(length(x) > 0) min(as.numeric(x)) else NA)
+  max_val <- sapply(nums, function(x) if(length(x) > 0) max(as.numeric(x)) else NA)
+  avg_val <- (min_val + max_val) / 2
+  return(data.frame(min = min_val, max = max_val, avg = avg_val))
+}
+
+# We apply the function to the 4 main variables to create 12 new clean columns
+stats_harvest <- stats_extraction(edible_plants$days_harvest)
+stats_germ <- stats_extraction(edible_plants$days_germination)
+stats_temp_germ <- stats_extraction(edible_plants$temperature_germination)
+stats_temp_grow <- stats_extraction(edible_plants$temperature_growing)
+
+edible_plants_clean <- edible_plants_clean %>%
+  mutate(
+    days_harvest_min = stats_harvest$min,
+    days_harvest_max = stats_harvest$max,
+    days_harvest_avg = stats_harvest$avg,
+    days_germ_min = stats_germ$min,
+    days_germ_max = stats_germ$max,
+    days_germ_avg = stats_germ$avg,
+    temp_germ_min = stats_temp_germ$min,
+    temp_germ_max = stats_temp_germ$max,
+    temp_germ_avg = stats_temp_germ$avg,
+    temp_grow_min = stats_temp_grow$min,
+    temp_grow_max = stats_temp_grow$max,
+    temp_grow_avg = stats_temp_grow$avg
+  )
+```
+
+```{r data cleaning, message=FALSE, warning=FALSE}
+# 4. Empyt values management
+# We replace Nas with categorical variables so we do not loss information in the charts
+edible_plants_clean <- edible_plants_clean %>%
+  mutate(
+    soil = replace_na(soil, "not specified"),
+    nutrients = replace_na(nutrients, "not specified")
+  )
+```
+
+```{r data cleaning, message=FALSE, warning=FALSE}
+# 5. Changes verification
+# We compare the number of columns of the original model vs the new one
+cat("Original columns:", ncol(edible_plants), "\n")
+cat("Columns after cleaning:", ncol(edible_plants_clean), "\n")
+
+# We show the first rows of the new added columns
+edible_plants_clean %>% 
+  select(common_name, starts_with("days_harvest")) %>% 
+  head() %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
 ```
