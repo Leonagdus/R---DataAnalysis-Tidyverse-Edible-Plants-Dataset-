@@ -12,8 +12,6 @@ output:
 
 # Introduction
 
-# Introduction
-
 ## Setup
 ```{r setup, message=FALSE, warning=FALSE}
 # Cargamos las librerías necesarias para el análisis.
@@ -56,6 +54,15 @@ download.file(
 edible_plants <- read_csv(here("Data", "edible_plants.csv"))
 ```
 
+## Checking the dataset
+```{r, message = FALSE, warning = FALSE}
+# Summary of all the columns of the dataset
+glimpse(edible_plants)
+
+# Numeric summary of the numeric columns of the database
+skim(edible_plants)
+```
+
 # Data Cleaning and Preparation
 
 In this section we clean the original dataset to correct inconsistencies and transform text variables into analyzable numerical data.
@@ -86,221 +93,6 @@ edible_plants_clean <- edible_plants_clean %>%
   )
 ```
 
-```{r data cleaning, message=FALSE, warning=FALSE}
-# 3. Transformation from ranges to numerico columns
-# This feature extracts numbers from strings like "55-75" or "180+"
-stats_extraction <- function(column) {
-  nums <- str_extract_all(column, "\\d+")
-  min_val <- sapply(nums, function(x) if(length(x) > 0) min(as.numeric(x)) else NA)
-  max_val <- sapply(nums, function(x) if(length(x) > 0) max(as.numeric(x)) else NA)
-  avg_val <- (min_val + max_val) / 2
-  return(data.frame(min = min_val, max = max_val, avg = avg_val))
-}
-
-# We apply the function to the 4 main variables to create 12 new clean columns
-stats_harvest <- stats_extraction(edible_plants$days_harvest)
-stats_germ <- stats_extraction(edible_plants$days_germination)
-stats_temp_germ <- stats_extraction(edible_plants$temperature_germination)
-stats_temp_grow <- stats_extraction(edible_plants$temperature_growing)
-
-edible_plants_clean <- edible_plants_clean %>%
-  mutate(
-    days_harvest_min = stats_harvest$min,
-    days_harvest_max = stats_harvest$max,
-    days_harvest_avg = stats_harvest$avg,
-    days_germ_min = stats_germ$min,
-    days_germ_max = stats_germ$max,
-    days_germ_avg = stats_germ$avg,
-    temp_germ_min = stats_temp_germ$min,
-    temp_germ_max = stats_temp_germ$max,
-    temp_germ_avg = stats_temp_germ$avg,
-    temp_grow_min = stats_temp_grow$min,
-    temp_grow_max = stats_temp_grow$max,
-    temp_grow_avg = stats_temp_grow$avg
-  )
-```
-
-```{r data cleaning, message=FALSE, warning=FALSE}
-# 4. Empyt values management
-# We replace Nas with categorical variables so we do not loss information in the charts
-edible_plants_clean <- edible_plants_clean %>%
-  mutate(
-    soil = replace_na(soil, "not specified"),
-    nutrients = replace_na(nutrients, "not specified")
-  )
-```
-
-```{r data cleaning, message=FALSE, warning=FALSE}
-# 5. Changes verification
-# We compare the number of columns of the original model vs the new one
-cat("Original columns:", ncol(edible_plants), "\n")
-cat("Columns after cleaning:", ncol(edible_plants_clean), "\n")
-
-# We show the first rows of the new added columns
-edible_plants_clean %>% 
-  select(common_name, starts_with("days_harvest")) %>% 
-  head() %>%
-  kable() %>%
-  kable_styling(bootstrap_options = c("striped", "hover"))
-```
-
-
-```{r data cleaning, message=FALSE, warning=FALSE}
-# Propuesta de Dani
-edible_plants_clean
-
-pp<- edible_plants_clean %>%
-  select(days_germ_avg, temp_germ_avg, temp_grow_avg, cultivation)
-
-plot<- pp %>%
-  filter(
-    !is.na(days_germ_avg),
-    !is.na(temp_germ_avg),
-    !is.na(temp_grow_avg),
-    !is.na(cultivation)
-  )
-
-graph1<-  plot %>%
-  ggplot(aes(x = temp_grow_avg, y = days_germ_avg, ,color=cultivation))  + geom_point(size=1.2,alpha=0.7) +
-  labs(
-    title = "Temperature of growing in relation with the days of germination by cultive",
-    subtitle = "Edible plants dataset",
-    x = "Temp of growing (cº)",
-    y = "Days of germination",
-    color = "Cultive"
-  ) + theme_minimal() +  geom_smooth(method = "lm", formula = y ~ x, se = FALSE)
-
-graph1
-```
-
-
-```{r data cleaning, message=FALSE, warning=FALSE}
-# Propuesta de Dani
-edible_plants_clean
-
-pp<- edible_plants_clean %>%
-  select(sunlight, nutrients, season, energy)
-
-plot<- pp %>%
-  filter(
-    !is.na(sunlight),
-    !is.na(nutrients),
-    !is.na(season),
-    !is.na(energy)
-  )
-
-graph2<-  plot %>%
-  ggplot(aes(x = nutrients, y = energy, fill = season)) +
-  geom_boxplot(show.legend = FALSE) +
-  labs(
-    title = "Nutrients in function of energy neccessary to grow",
-    subtitle = "Edible plants dataset",
-    x = "Nutrients",
-    y = "Energy neccesary (Jls)",
-    color = "Season"
-  ) + theme_minimal()
-
-graph2
-```
-
-
-
-
-```{r data cleaning, message=FALSE, warning=FALSE}
-# Propuesta de Dani
-edible_plants_clean
-
-pp<- edible_plants_clean %>%
-  select(preferred_ph_upper, temp_germ_avg, season, water,sunlight)
-
-plot<- pp %>%
-  filter(
-    !is.na(preferred_ph_upper),
-    !is.na(temp_germ_avg),
-    !is.na(season),
-    !is.na(water),
-    !is.na(sunlight)
-  )
-
-graph3<-  plot %>%
-  ggplot(aes(
-    x = preferred_ph_upper,
-    y = temp_germ_avg,
-    color = sunlight
-  )) +
-  geom_point(size = 1.9, alpha = 0.7) +
-  scale_color_brewer(palette = "Dark2") +
-  labs(
-    title = "Based on sunlight and amount water required, how the PH affects the temperature of germination",
-    x = "Preferred ph (upper)",
-    y = "Temperature of germination (Cº)",
-    color = "Sunlight"
-  ) +
-  facet_grid(~ water) +
-  theme_minimal()
-
-graph3
-```
-
-
-
-```{r data cleaning, message=FALSE, warning=FALSE}
-# Propuesta de Dani
-edible_plants_clean
-
-pp<- edible_plants_clean %>%
-  select(cultivation, temp_germ_avg, temperature_class, water,sunlight)
-
-plot<- pp %>%
-  filter(
-    !is.na(cultivation),
-    !is.na(temperature_class)
-  )
-
-graph4 <- plot %>%
-  ggplot(aes(x = cultivation, fill = temperature_class)) +
-  geom_bar(position = "dodge") + 
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(
-    title = "Number of cultives in function of temperature class",
-    subtitle = "Edible plants dataset",
-    x = "Cultivation type",
-    y = "Number",
-    color = "Temperature"
-  )
-
-graph4
-
-#PREGUNTAR AL PROFESOR COMO ARREGLARLO
-```
-
-
-```{r data cleaning, message=FALSE, warning=FALSE}
-# Propuesta de Dani
-edible_plants_clean
-
-pp<- edible_plants_clean %>%
-  select(days_harvest_avg, days_germ_avg, temperature_class, water,sunlight)
-
-plot<- pp %>%
-  filter(
-    !is.na(days_harvest_avg),
-    !is.na(days_germ_avg),
-    !is.na(temperature_class)
-  )
-
-graph5 <-  plot %>%
-  ggplot(aes(x = days_harvest_avg, y = days_germ_avg, ,color=temperature_class))  + geom_point(size=1.2,alpha=0.7) +
-  labs(
-    title = "Days of harvest in function of germination days by temperature class",
-    subtitle = "Edible plants dataset",
-    x = "Days of harvest",
-    y = "Days of germination",
-    color = "Temperature"
-  ) + theme_minimal() +  geom_smooth(method = "lm", formula = y ~ x, se = FALSE)
-
-graph5
-
-#PREGUNTAR AL PROFESOR COMO ARREGLARLO
+```{r}
+write_csv(edible_plants_clean, here("Data", "edible_plants_cleaned.csv"))
 ```
