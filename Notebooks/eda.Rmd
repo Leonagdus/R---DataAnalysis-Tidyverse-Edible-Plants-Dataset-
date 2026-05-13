@@ -441,7 +441,7 @@ ggsave(
 library(reshape2) 
 
 numeric_vars <- tornados_clean %>%
-  select(
+  dplyr::select(
     mag, len, wid, inj, fat, 
     loss, victims_total, area_sq_mi, 
     loss_log10

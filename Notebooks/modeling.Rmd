@@ -77,7 +77,7 @@ Based on what we observed in the EDA, we formulate two analytical questions:
 ```{r model data, message=FALSE, warning=FALSE}
 # Select and filter the variables we will use
 model_data <- tornados_clean %>%
-  select(
+  dplyr::select(
     victims_total,
     is_deadly,
     mag,
@@ -103,7 +103,17 @@ cat("Columns used:", ncol(model_data), "\n")
 
 ---
 
-# Model 1 — Linear Regression
+# First models — Linear Regression
+
+## Victims Analysis
+
+First we are going to see how the victmis are distributed along the different ranges
+
+```{r}
+ggplot(tornados_clean, aes(x = victims_total)) + 
+  geom_histogram() + 
+  scale_y_log10()
+```
 
 ## Why these variables?
 
@@ -126,12 +136,36 @@ victims_total = β0 + β1*mag + β2*len + β3*wid + β4*season + β5*us_region +
 Each coefficient (β) tells us how much `victims_total` changes for each unit increase in that variable, holding the rest constant.
 
 ```{r linear model, message=FALSE, warning=FALSE}
+library(MASS) # Required for glm.nb
+
+# Model 1: Linear Regression
 model_linear <- lm(
   victims_total ~ mag + len + wid + season + us_region,
   data = model_data
 )
 
+# Model 2: Poisson Regression
+model_poisson <- glm(
+  victims_total ~ mag + len + wid + season + us_region,
+  family = poisson(link = "log"),
+  data = model_data
+)
+
+# Model 3: Negative Binomial Regression
+model_negbinom <- glm.nb(
+  victims_total ~ mag + len + wid + season + us_region,
+  data = model_data
+)
+
+# Model comparison
+performance_comparison <- performance::compare_performance(
+  model_linear, model_poisson, model_negbinom, 
+  rank = TRUE
+)
+
 summary(model_linear)
+summary(model_poisson)
+summary(model_negbinom)
 ```
 
 ## Coefficient interpretation
@@ -139,40 +173,107 @@ summary(model_linear)
 ```{r linear coef, message=FALSE, warning=FALSE}
 tidy(model_linear) %>%
   mutate(
-    significant = ifelse(p.value < 0.05, "Yes ***", "No")
+    significant = ifelse(p.value < 0.05, "Yes**", "No")
   ) %>%
   kable(digits = 4, caption = "Linear Regression Coefficients") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"))
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
+
+tidy(model_poisson) %>%
+  mutate(
+    significant = ifelse(p.value < 0.05, "Yes**", "No")
+  ) %>%
+  kable(digits = 4, caption = "Poisson Regression Coefficients (Log-Link)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
+
+tidy(model_negbinom) %>%
+  mutate(
+    significant = ifelse(p.value < 0.05, "Yes**", "No")
+  ) %>%
+  kable(digits = 4, caption = "Negative Binomial Regression Coefficients") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
 ```
 
 **How to read the table:**
 
 - `estimate` → for each unit increase in that variable, victims_total changes by this amount.
+- `std.error` → the variance of the estiamation. The smaller it is with respect to the estimate the better.
+- `statistic` → how much bigger is the estimate than the error. Above 2 is a good indicator.
 - `p.value` → if below 0.05, the variable has a statistically significant effect.
-- Variables marked **Yes** are meaningful predictors.
+
+- Variables marked **Yes** are meaningful predictors and in **No** variables there is not enough statistical evidence.
+- For reference: in the group of season terms, the comparison is done with respect to Fall.
+- For reference: in the group of region terms, the comparison is done with respect to Midwest.
 
 ## Model quality
 
 ```{r linear quality, message=FALSE, warning=FALSE}
 glance(model_linear) %>%
-  select(r.squared, adj.r.squared, sigma, p.value) %>%
+  dplyr::select(AIC, BIC, deviance, logLik, df.residual) %>%
   kable(digits = 4, caption = "Linear Model Quality Metrics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
+
+glance(model_poisson) %>%
+  dplyr::select(AIC, BIC, deviance, logLik, df.residual) %>%
+  kable(digits = 4, caption = "Poisson Model Quality Metrics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
+
+glance(model_negbinom) %>%
+  dplyr::select(AIC, BIC, deviance, logLik, df.residual) %>%
+  kable(digits = 4, caption = "Negative Binomial Model Quality Metrics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
+```
+
+```{r}
+compare_performance(model_linear, model_poisson, model_negbinom) %>%
+  kable(digits = 4, caption = "Global Model Comparison (Linear vs Poisson vs NegBin)") %>%
   kable_styling(bootstrap_options = c("striped", "hover"))
 ```
 
 **How to read:**
 
-- `r.squared` → proportion of variance in victims explained by the model (0 to 1, higher is better).
-- `adj.r.squared` → same but penalizes for adding unnecessary variables.
-- `sigma` → average prediction error in the same units as `victims_total`.
+- `AIC (Akaike Information Criterion)` estimates the relative amount of infomration lost by a model (the lower the better).
+- `AIC_wt` the best model to pick.
+- `BIC (Bayesian Information Cirterio)` simialr to AIC but with stronger penalty for including additional parameters (the lower the better).
+- `BIC_wt` the best model to pick.
+- `RMSE (Root Mean Square Error)` gives error at the prediction with respect to the real values observed.
+- `Sigma` standard deviation
+- `R2_Nagelkerke` is and adaptation of R2 of linear models to GLM (Generalised Linear Model). The lower the better.
+- `R2 / R2_adjusted` explains how good is the model and its "goodness-of-fit".
 
 ## Diagnostic plots
 
 ```{r linear diagnostics, message=FALSE, warning=FALSE}
-performance::check_model(model_linear)
-```
+diag_plot <- performance::check_model(model_linear)
 
----
+diag_plot_visual <- plot(diag_plot)
+
+ggsave(
+  filename = here("Outputs", "lin_reg_model_diagnostics.png"),
+  plot = diag_plot_visual,
+  width = 12,
+  height = 10,
+  dpi = 1000
+)
+
+diag_poisson <- performance::check_model(model_poisson)
+p_diag_poisson <- plot(diag_poisson)
+
+ggsave(
+  filename = here("Outputs", "poisson_diagnostics.png"),
+  plot = p_diag_poisson,
+  width = 15, height = 12, dpi = 1000
+)
+
+diag_negbinom <- performance::check_model(model_negbinom)
+p_diag_negbinom <- plot(diag_negbinom)
+
+ggsave(
+  filename = here("Outputs", "negbinom_diagnostics.png"),
+  plot = p_diag_negbinom,
+  width = 15, height = 12, dpi = 1000
+)
+
+```
 
 # Model 2 — Logistic Regression
 
@@ -212,7 +313,7 @@ tidy(model_logistic) %>%
     odds_ratio  = exp(estimate),
     significant = ifelse(p.value < 0.05, "Yes ***", "No")
   ) %>%
-  select(term, estimate, odds_ratio, p.value, significant) %>%
+  dplyr::select(term, estimate, odds_ratio, p.value, significant) %>%
   kable(digits = 4, caption = "Logistic Regression — Odds Ratios") %>%
   kable_styling(bootstrap_options = c("striped", "hover"))
 ```
@@ -229,7 +330,7 @@ For example, if `mag` has an odds ratio of 2.5, each additional Fujita scale poi
 
 ```{r logistic quality, message=FALSE, warning=FALSE}
 glance(model_logistic) %>%
-  select(null.deviance, deviance, AIC, BIC) %>%
+  dplyr::select(null.deviance, deviance, AIC, BIC) %>%
   kable(digits = 2, caption = "Logistic Model Quality Metrics") %>%
   kable_styling(bootstrap_options = c("striped", "hover"))
 ```
@@ -274,25 +375,23 @@ cat("Model accuracy:", round(accuracy * 100, 2), "%\n")
 # Model Comparison
 
 ```{r comparison, message=FALSE, warning=FALSE}
-comparison <- data.frame(
-  Model             = c("Linear Regression", "Logistic Regression"),
-  Dependent_Variable = c("victims_total (numeric)", "is_deadly (binary)"),
-  R_Function        = c("lm()", "glm(..., family=binomial)"),
-  Question_Answered = c("How many victims?", "Will it be deadly?"),
-  Quality_Metric    = c("R² / Adj R²", "Accuracy / AIC"),
-  Interpretation    = c("Direct coefficients", "Odds ratios via exp()")
+comparison_full <- data.frame(
+  Model              = c("Linear Regression", "Logistic Regression", "Poisson Regression", "Negative Binomial"),
+  Dependent_Variable  = c("log(victims_total + 1)", "is_deadly (binary)", "victims_total (counts)", "victims_total (counts)"),
+  R_Function         = c("lm()", "glm(..., family=binomial)", "glm(..., family=poisson)", "glm.nb()"),
+  Question_Answered  = c("How much does Y change?", "Will it be deadly (Yes/No)?", "What is the expected count?", "What is the count (with outliers)?"),
+  Quality_Metric     = c("R² / Adj R²", "Accuracy / AIC", "AIC / Deviance", "AIC / BIC / Dispersion"),
+  Interpretation     = c("Direct coefficients", "Odds Ratios", "Incident Rate Ratios", "Incident Rate Ratios")
 )
 
-comparison %>%
-  kable(caption = "Summary Comparison of Both Models") %>%
+comparison_full %>%
+  kable(caption = "Comprehensive Comparison of Tornado Impact Models") %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
 
 ## Conclusions
 
-- The **linear model** reveals which physical characteristics of a tornado (magnitude, length, width) most strongly predict the number of victims. Variables with significant p-values confirm the expected relationship: more powerful and longer tornadoes cause more harm.
-
-- The **logistic model** allows classification of tornadoes as deadly or not. The odds ratios quantify how much each factor multiplies the probability of fatalities. This is more operationally useful — for example, for early warning systems.
-
-- Both models use the same predictors but answer different questions. The logistic model is more robust for imbalanced outcomes (most tornadoes are not deadly), while the linear model gives more interpretable magnitude estimates for planning purposes.
-```
+- **Linear Regression (Log-Transformed)**: This model serves as our baseline. By applying a log(y+1) transformation, we reveal how physical characteristics (magnitude, length, width) predict the scale of the impact. It is highly interpretable for general planning, telling us, for example, that a 1-unit increase in magnitude corresponds to a specific percentage increase in victims.
+- **Poisson Regression**: This is our first specialized "count model." It assumes that the number of victims follows a Poisson distribution where the mean equals the variance. While it provides Incident Rate Ratios (IRR)—telling us how much each factor multiplies the expected number of victims—it often struggles with "Overdispersion" in tornado data (where rare, catastrophic events create more variance than the model expects).
+- **Negative Binomial Regression**: This is the "Gold Standard" for our dataset. It functions like the Poisson model but includes an extra parameter to handle the extreme variance and "long tail" of deadly tornadoes. By successfully modeling the high number of zeros (non-deadly tornadoes) alongside rare mass-casualty events, it provides the most mathematically honest and accurate estimates of casualty counts.```
+- **Logistic Regression**: Instead of predicting "how many," this model answers the binary question: "Will this tornado be deadly?" By calculating Odds Ratios ($exp(\beta)$), it allows us to classify risk. This is the most operationally useful tool for emergency services and early warning systems, where a "Yes/No" threshold is needed to trigger specific evacuation protocols.

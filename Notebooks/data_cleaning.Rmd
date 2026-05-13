@@ -166,7 +166,7 @@ tornados_clean <- tornados_clean |>
   # Drop stn because it was discontinued and was inconsistent before being
   # discontinued. closs (crop loss) has an unexplained discontinuity in 2016 and
   # it isn't entirely clear what changed.
-  select(-"stn", -"closs") |> 
+  dplyr::select(-"stn", -"closs") |> 
   # Recode some more weird columns.
   mutate(
     # The mag column uses -9 for NA.
