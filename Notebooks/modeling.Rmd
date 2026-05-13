@@ -1,5 +1,5 @@
 ---
-title: "Edible Plants Dataset Analisis (TidyTuesday) - Modeling"
+title: "Tornados Analysis (TidyTuesday) - Modeling"
 author: "Leonardo Cárdenas Peralta, Daniel Enrique Molina Sanglade and Enrique Fernandez Salmeron"
 date: "April-May 2026"
 output: 
@@ -9,3 +9,290 @@ output:
     theme: cosmo
     highlight: tango
 ---
+
+# Introduction
+
+In this section we build statistical models to go beyond description and answer concrete analytical questions about tornadoes in the United States.
+
+## Setup
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(here)
+library(performance)
+library(kableExtra)
+library(broom)
+```
+
+## Load the cleaned dataset
+
+```{r load data, message=FALSE, warning=FALSE}
+tornados_clean <- read_csv(here("Data", "tornados_clean.csv"))
+
+# Re-create the engineered columns from EDA (needed for modeling)
+tornados_clean <- tornados_clean %>%
+  mutate(
+    victims_total  = inj + fat,
+    is_deadly      = fat > 0,
+    area_sq_mi     = len * (wid / 1760),
+    has_loss       = !is.na(loss) & loss > 0,
+    season = case_when(
+      mo %in% c(12, 1, 2)  ~ "Winter",
+      mo %in% c(3, 4, 5)   ~ "Spring",
+      mo %in% c(6, 7, 8)   ~ "Summer",
+      mo %in% c(9, 10, 11) ~ "Fall"
+    ),
+    mag_category = case_when(
+      mag <= 1 ~ "Weak",
+      mag <= 3 ~ "Strong",
+      mag > 3  ~ "Violent",
+      TRUE     ~ "Unknown"
+    ),
+    us_region = case_when(
+      st %in% c("CT","ME","MA","NH","RI","VT","NJ","NY","PA") ~ "Northeast",
+      st %in% c("IL","IN","IA","KS","MI","MN","MO","NE","ND","OH","SD","WI") ~ "Midwest",
+      st %in% c("AL","AR","DE","FL","GA","KY","LA","MD","MS","NC","OK","SC","TN","TX","VA","WV") ~ "South",
+      TRUE ~ "West"
+    ),
+    loss_log10 = ifelse(loss > 0, log10(loss), 0)
+  )
+```
+
+---
+
+# Research Questions
+
+Based on what we observed in the EDA, we formulate two analytical questions:
+
+1. **Can we predict the total number of victims of a tornado** (injuries + fatalities) based on its physical characteristics (magnitude, path length, width)?  
+   → Answered with **Linear Regression**.
+
+2. **Can we predict whether a tornado will be deadly** (at least one fatality) based on its characteristics?  
+   → Answered with **Logistic Regression**.
+
+---
+
+# Data Preparation for Modeling
+
+```{r model data, message=FALSE, warning=FALSE}
+# Select and filter the variables we will use
+model_data <- tornados_clean %>%
+  select(
+    victims_total,
+    is_deadly,
+    mag,
+    len,
+    wid,
+    area_sq_mi,
+    season,
+    us_region,
+    mag_category
+  ) %>%
+  filter(
+    !is.na(victims_total),
+    !is.na(mag),
+    !is.na(len),
+    !is.na(wid),
+    !is.na(season),
+    !is.na(us_region)
+  )
+
+cat("Rows available for modeling:", nrow(model_data), "\n")
+cat("Columns used:", ncol(model_data), "\n")
+```
+
+---
+
+# Model 1 — Linear Regression
+
+## Why these variables?
+
+We want to predict `victims_total` (injuries + fatalities), which is a **continuous numeric variable**. We use:
+
+- `mag` → tornado magnitude on the Fujita scale: more powerful tornadoes are expected to cause more damage.
+- `len` → path length in miles: longer paths affect more area and more people.
+- `wid` → width in yards: wider tornadoes cover more surface.
+- `season` → time of year: tornadoes in Spring tend to be more intense.
+- `us_region` → geographic region: the South and Midwest are more densely affected.
+
+## How the model works
+
+Linear regression finds the equation:
+
+```
+victims_total = β0 + β1*mag + β2*len + β3*wid + β4*season + β5*us_region + ε
+```
+
+Each coefficient (β) tells us how much `victims_total` changes for each unit increase in that variable, holding the rest constant.
+
+```{r linear model, message=FALSE, warning=FALSE}
+model_linear <- lm(
+  victims_total ~ mag + len + wid + season + us_region,
+  data = model_data
+)
+
+summary(model_linear)
+```
+
+## Coefficient interpretation
+
+```{r linear coef, message=FALSE, warning=FALSE}
+tidy(model_linear) %>%
+  mutate(
+    significant = ifelse(p.value < 0.05, "Yes ***", "No")
+  ) %>%
+  kable(digits = 4, caption = "Linear Regression Coefficients") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+**How to read the table:**
+
+- `estimate` → for each unit increase in that variable, victims_total changes by this amount.
+- `p.value` → if below 0.05, the variable has a statistically significant effect.
+- Variables marked **Yes** are meaningful predictors.
+
+## Model quality
+
+```{r linear quality, message=FALSE, warning=FALSE}
+glance(model_linear) %>%
+  select(r.squared, adj.r.squared, sigma, p.value) %>%
+  kable(digits = 4, caption = "Linear Model Quality Metrics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+**How to read:**
+
+- `r.squared` → proportion of variance in victims explained by the model (0 to 1, higher is better).
+- `adj.r.squared` → same but penalizes for adding unnecessary variables.
+- `sigma` → average prediction error in the same units as `victims_total`.
+
+## Diagnostic plots
+
+```{r linear diagnostics, message=FALSE, warning=FALSE}
+performance::check_model(model_linear)
+```
+
+---
+
+# Model 2 — Logistic Regression
+
+## Why these variables?
+
+We want to predict `is_deadly` (TRUE/FALSE — did the tornado kill anyone?), which is a **binary variable**. This requires logistic regression instead of linear regression.
+
+We use the same predictors as before since they describe the tornado's physical intensity, which is directly related to its lethality.
+
+## How the model works
+
+Logistic regression models the **probability** that `is_deadly = TRUE`:
+
+```
+log(P/(1-P)) = β0 + β1*mag + β2*len + β3*wid + β4*season + β5*us_region
+```
+
+The output is always a probability between 0 and 1. We use `family = binomial` to tell R this is logistic regression.
+
+```{r logistic model, message=FALSE, warning=FALSE}
+model_logistic <- glm(
+  is_deadly ~ mag + len + wid + season + us_region,
+  data = model_data,
+  family = binomial
+)
+
+summary(model_logistic)
+```
+
+## Coefficient interpretation (Odds Ratios)
+
+In logistic regression, coefficients are interpreted as **odds ratios** after applying `exp()`:
+
+```{r logistic coef, message=FALSE, warning=FALSE}
+tidy(model_logistic) %>%
+  mutate(
+    odds_ratio  = exp(estimate),
+    significant = ifelse(p.value < 0.05, "Yes ***", "No")
+  ) %>%
+  select(term, estimate, odds_ratio, p.value, significant) %>%
+  kable(digits = 4, caption = "Logistic Regression — Odds Ratios") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+**How to read odds ratios:**
+
+- `odds_ratio > 1` → that variable **increases** the probability of a deadly tornado.
+- `odds_ratio < 1` → that variable **decreases** the probability.
+- `odds_ratio = 1` → no effect.
+
+For example, if `mag` has an odds ratio of 2.5, each additional Fujita scale point multiplies the odds of a deadly tornado by 2.5.
+
+## Model quality
+
+```{r logistic quality, message=FALSE, warning=FALSE}
+glance(model_logistic) %>%
+  select(null.deviance, deviance, AIC, BIC) %>%
+  kable(digits = 2, caption = "Logistic Model Quality Metrics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+**How to read:**
+
+- `AIC` / `BIC` → lower is better. Used to compare models of the same type.
+- `deviance` → how well the model fits. Lower deviance vs `null.deviance` means improvement over a model that predicts nothing.
+
+```{r logistic accuracy, message=FALSE, warning=FALSE}
+# Predicted probabilities and classification
+model_data <- model_data %>%
+  mutate(
+    pred_prob    = predict(model_logistic, type = "response"),
+    pred_deadly  = pred_prob > 0.5
+  )
+
+# Confusion matrix
+conf_matrix <- table(
+  Predicted = model_data$pred_deadly,
+  Actual    = model_data$is_deadly
+)
+
+conf_matrix %>%
+  kable(caption = "Confusion Matrix — Logistic Model") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# Overall accuracy
+accuracy <- mean(model_data$pred_deadly == model_data$is_deadly, na.rm = TRUE)
+cat("Model accuracy:", round(accuracy * 100, 2), "%\n")
+```
+
+**How to read the confusion matrix:**
+
+- **True Positives** (top-left): correctly predicted deadly tornadoes.
+- **True Negatives** (bottom-right): correctly predicted non-deadly tornadoes.
+- **False Positives**: predicted deadly but wasn't.
+- **False Negatives**: predicted not deadly but it was.
+
+---
+
+# Model Comparison
+
+```{r comparison, message=FALSE, warning=FALSE}
+comparison <- data.frame(
+  Model             = c("Linear Regression", "Logistic Regression"),
+  Dependent_Variable = c("victims_total (numeric)", "is_deadly (binary)"),
+  R_Function        = c("lm()", "glm(..., family=binomial)"),
+  Question_Answered = c("How many victims?", "Will it be deadly?"),
+  Quality_Metric    = c("R² / Adj R²", "Accuracy / AIC"),
+  Interpretation    = c("Direct coefficients", "Odds ratios via exp()")
+)
+
+comparison %>%
+  kable(caption = "Summary Comparison of Both Models") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## Conclusions
+
+- The **linear model** reveals which physical characteristics of a tornado (magnitude, length, width) most strongly predict the number of victims. Variables with significant p-values confirm the expected relationship: more powerful and longer tornadoes cause more harm.
+
+- The **logistic model** allows classification of tornadoes as deadly or not. The odds ratios quantify how much each factor multiplies the probability of fatalities. This is more operationally useful — for example, for early warning systems.
+
+- Both models use the same predictors but answer different questions. The logistic model is more robust for imbalanced outcomes (most tornadoes are not deadly), while the linear model gives more interpretable magnitude estimates for planning purposes.
+```
