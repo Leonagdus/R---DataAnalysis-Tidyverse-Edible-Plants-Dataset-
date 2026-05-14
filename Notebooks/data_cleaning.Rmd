@@ -28,17 +28,6 @@ library(kableExtra)
 
 Now we have to downlaod the dataset to start working with it
 
-```{r Option 1, message=FALSE, warning=FALSE}
-tuesdata <- tidytuesdayR::tt_load('2026-02-03')
-
-tornados <- tuesdata$tornados
-```
-
-```{r Option 2, message=FALSE, warning=FALSE}
-tornados <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2023/2023-05-16/tornados.csv')
-tornados
-```
-
 ```{r Option 3, message=FALSE, warning=FALSE}
 url <- "https://www.spc.noaa.gov/wcm/data/1950-2022_actual_tornadoes.csv"
 
@@ -83,7 +72,7 @@ tornados <- read_csv(
 ```
 
 ## Checking the dataset
-```{r, message = FALSE, warning = FALSE}
+```{r final dataset summary, message = FALSE, warning = FALSE}
 # Summary of all the columns of the dataset
 glimpse(tornados)
 
@@ -95,7 +84,7 @@ skim(tornados)
 
 In this section we clean the original dataset to correct inconsistencies and transform text variables into analyzable numerical data.
 
-```{r data cleaning, message=FALSE, warning=FALSE}
+```{r names cleaning, message=FALSE, warning=FALSE}
 # 1. Name normalization and cleaning
 
 # We are using janitor to parse the name of the categorical variables so they all have the same structure.
@@ -105,7 +94,7 @@ tornados_clean <- tornados %>%
   mutate(across(where(is.character), ~str_trim(str_to_lower(.))))
 ```
 
-```{r}
+```{r data cleaning, message=FALSE, warning=FALSE}
 glimpse(tornados)
 
 tornados_clean <- tornados

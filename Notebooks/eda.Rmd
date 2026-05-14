@@ -12,11 +12,23 @@ output:
 
 ## Creation of new columns from the old ones
 
-```{r}
+```{r imports, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tidytuesdayR)
+library(janitor)
+library(skimr)
+library(here)
+#library(tidymodels)
+library(performance)
+library(kableExtra)
+library(maps)
+```
+
+```{r data importation, message=FALSE, warning=FALSE }
 tornados_clean <- read_csv(here("Data", "tornados_clean.csv"))
 ```
 
-```{r}
+```{r new column creation, message=FALSE, warning=FALSE}
 # New columns creation
 tornados_clean <- tornados_clean %>%
   # 1. CALCULATED INDICATORS
@@ -80,9 +92,9 @@ tornados_clean <- tornados_clean %>%
 glimpse(tornados_clean)
 ```
 
-# Graph creation
+## Charts creation
 
-```{r data cleaning, message=FALSE, warning=FALSE}
+```{r chart 1, message=FALSE, warning=FALSE}
 # --- Chart 1: Annual Evolution of Tornados (1950-2022) ---
 
 # Create the chart
@@ -118,7 +130,7 @@ ggsave(
 ```
 
 
-```{r data cleaning, message=FALSE, warning=FALSE}
+```{r chart 2, message=FALSE, warning=FALSE}
 # --- Chart 2: Seasonal Frequency of Tornados ---
 
 # Prepare the data grouping by season
@@ -161,7 +173,7 @@ ggsave(
 
 
 
-```{r data cleaning, message=FALSE, warning=FALSE}
+```{r chart 3, message=FALSE, warning=FALSE}
 # --- Chart 3: Daily Cycle of Tornadoes (Frequency by Time of Day) ---
 
 # Prepare data by ordering the time categories
@@ -208,7 +220,7 @@ ggsave(
 
 
 
-```{r data cleaning, message=FALSE, warning=FALSE}
+```{r chart 4, message=FALSE, warning=FALSE}
 # --- Chart 4: Magnitude vs. Economic Damage (Box Plot) ---
 
 # Prepare the data filtering NAs and categories
@@ -252,7 +264,7 @@ ggsave(
 ```
 
 
-```{r data cleaning, message=FALSE, warning=FALSE}
+```{r chart 5, message=FALSE, warning=FALSE}
 # --- Chart 5: Regional Mortality (Stacked Bar Chart) ---
 
 # Prepare the data converting logical to descriptive factor
@@ -299,7 +311,7 @@ ggsave(
 )
 ```
 
-```{r}
+```{r chart 6, message=FALSE, warning=FALSE}
 # --- Chart 6: Path Length vs. Total Victims (Scatter Plot with LR) ---
 
 # Prepare the data filtering NAs in variables of interest
@@ -338,11 +350,11 @@ ggsave(
 )
 ```
 
-```{r}
+```{r chart 7, message=FALSE, warning=FALSE}
 # --- Chart 7: Tornado Heatmap (Density Map of USA) ---
 
 # Load the US map from the "maps" package
-us_mainland <- map_data("state")
+us_mainland <- maps::map_data("state")
 
 # Prepare the data filtering coordinates 
 p7_data <- tornados_clean %>%
@@ -389,7 +401,7 @@ ggsave(
 )
 ```
 
-```{r}
+```{r chart 8, message=FALSE, warning=FALSE}
 # --- Chart 8: Top 10 States by Total Fatalities (Flipped Bar Chart) ---
 
 # Prepare the data summing fatalities per state and getting the top 10
@@ -434,7 +446,7 @@ ggsave(
 )
 ```
 
-```{r}
+```{r chart 9, message=FALSE, warning=FALSE}
 # --- Chart 9: Correlation Matrix of Numerical Variables ---
 
 # Necessary for the correlation matrix
@@ -488,7 +500,7 @@ ggsave(
 )
 ```
 
-```{r}
+```{r chart 10, message=FALSE, warning=FALSE}
 # --- Chart 10: Magnitude Density by Decade ---
 
 # Prepare the data creating a "decade" column and filtering NAs
