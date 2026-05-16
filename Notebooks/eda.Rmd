@@ -8,6 +8,7 @@ output:
     toc_depth: 2
     theme: cosmo
     highlight: tango
+    self_contained: true
 ---
 
 ## Creation of new columns from the old ones
@@ -22,11 +23,69 @@ library(here)
 library(performance)
 library(kableExtra)
 library(maps)
+library(gt)
 ```
 
 ```{r data importation, message=FALSE, warning=FALSE }
 tornados_clean <- read_csv(here("Data", "tornados_clean.csv"))
 ```
+
+
+```{r}
+# 1. DESCRIPTION OF VARIABLES
+options(knitr.table.format = "simple")
+
+dictionary <- tibble(
+  Variable = c("om", "yr", "mo", "dy", "date", "time", "tz", "datetime_utc",
+               "st", "stf", "mag", "inj", "fat", "loss", "slat", "slon",
+               "elat", "elon", "len", "wid", "ns", "sn", "f1", "f2", "f3", "f4", "fc"),
+  Type = c("integer", "integer", "integer", "integer", "date", "time", "character",
+            "datetime", "character", "integer", "integer", "integer", "integer",
+            "double", "double", "double", "double", "double", "double", "double",
+            "integer", "integer", "integer", "integer", "integer", "integer", "logical"),
+  Description = c(
+    "Tornado number. Effectively an ID for this tornado in this year.",
+    "Year, 1950-2022.",
+    "Month, 1-12.",
+    "Day of the month, 1-31.",
+    "Date.",
+    "Time.",
+    "Canonical tz database timezone.",
+    "Date and time normalized to UTC.",
+    "Two-letter postal abbreviation for the state.",
+    "State FIPS number.",
+    "Magnitude on the F scale (EF beginning in 2007).",
+    "Number of injuries.",
+    "Number of fatalities.",
+    "Estimated property loss in dollars.",
+    "Starting latitude in decimal degrees.",
+    "Starting longitude in decimal degrees.",
+    "Ending latitude in decimal degrees.",
+    "Ending longitude in decimal degrees.",
+    "Length in miles.",
+    "Width in yards.",
+    "Number of states affected by this tornado.",
+    "State number for this row.",
+    "FIPS code for the 1st county.",
+    "FIPS code for the 2nd county.",
+    "FIPS code for the 3rd county.",
+    "FIPS code for the 4th county.",
+    "Was the mag column estimated?"
+  )
+)
+
+dictionary
+
+```
+
+```{r}
+# 2. BASIC DESCRIPTIVE STATISTICS
+# We take the most important variables of the dataset
+tornados_clean %>%
+  select(mag, len, wid, inj, fat, loss) %>%
+  summary()
+```
+
 
 ```{r new column creation, message=FALSE, warning=FALSE}
 # New columns creation
@@ -34,7 +93,7 @@ tornados_clean <- tornados_clean %>%
   # 1. CALCULATED INDICATORS
   mutate(
     victims_total = inj + fat,                                  # 1. Total affected people
-    is_deadly = fat > 0,                                        # 2. Binary death indictor
+    is_deadly = fat > 0,                                        # 2. Binary death indicator
     area_sq_mi = (len * (wid / 1760)),                          # 3. Estimated area
     has_loss = !is.na(loss) & loss > 0                          # 4. Economic damage indicator
   ) %>%
@@ -47,7 +106,7 @@ tornados_clean <- tornados_clean %>%
       mo %in% c(6, 7, 8)  ~ "Summer",
       mo %in% c(9, 10, 11) ~ "Fall"
     ),
-    mag_category = case_when(                                   # 6. Agrupación de intensidad (Escala Fujita) Intensity grouping (Fujita scale)
+    mag_category = case_when(                                   # 6. Intensity grouping (Fujita scale)
       mag <= 1 ~ "Weak",
       mag <= 3 ~ "Strong",
       mag > 3  ~ "Violent",
@@ -91,6 +150,8 @@ tornados_clean <- tornados_clean %>%
 
 glimpse(tornados_clean)
 ```
+
+
 
 ## Charts creation
 
@@ -354,7 +415,7 @@ ggsave(
 # --- Chart 7: Tornado Heatmap (Density Map of USA) ---
 
 # Load the US map from the "maps" package
-us_mainland <- maps::map_data("state")
+us_mainland <- ggplot2::map_data("state")
 
 # Prepare the data filtering coordinates 
 p7_data <- tornados_clean %>%

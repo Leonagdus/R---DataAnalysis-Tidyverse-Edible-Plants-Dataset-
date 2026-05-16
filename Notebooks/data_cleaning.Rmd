@@ -45,7 +45,7 @@ tornados <- read_csv(
     date = col_date(format = ""),
     time = col_time(format = ""),
     tz = col_integer(),
-    st = col_factor(),
+    st = readr::col_factor(),
     stf = col_integer(),
     stn = col_integer(),
     mag = col_integer(),
@@ -164,7 +164,7 @@ tornados_clean <- tornados_clean |>
     # The documentation (last updated in 2010) explains that the coding changed in
     # 1996. Observationally, it's clear that it changed again in 2016.
     loss = case_when(
-      loss == 0 ~ 0,
+      loss == 0 ~ NA,
       yr < 1996 & loss == 1 ~ 50,
       yr < 1996 & loss == 2 ~ 500,
       yr < 1996 & loss == 3 ~ 5000,
@@ -181,11 +181,29 @@ tornados_clean <- tornados_clean |>
     fc = as.logical(fc)
   )
 
-# Some of the remaining columns are confusing, but we'll explain them in the
-# dictionary and see what people find!
+# To clean the NAs created from the cleaning in mag and loss we will do interpolation
+
+tornados_clean <- tornados_clean |>
+  # We will replace the NAs in magnitude by the median, as it has very few values
+  mutate(mag = ifelse(is.na(mag), as.integer(median(mag, na.rm = TRUE)), mag)) |>
+  
+  # We will replace the NAs in loss with the median in the group of magnitude.
+  group_by(mag) |>
+  mutate(
+    loss = ifelse(is.na(loss), median(loss, na.rm = TRUE), loss)
+  ) |>
+  ungroup()
+
+tornados_clean <- tornados_clean |> 
+  mutate(loss = ifelse(is.na(loss), median(loss, na.rm = TRUE), loss))
 
 write_csv(
   tornados_clean,
   here("Data", "tornados_clean.csv")
 )
+```
+
+```{r}
+sum(is.na(tornados_clean$mag))
+sum(is.na(tornados_clean$loss))
 ```
