@@ -9,3 +9,69 @@ output:
     theme: cosmo
     highlight: tango
 ---
+
+#Summary of the project
+
+To finish our project and talk about everything we have done, we will firstly divide all  the work into
+3 main parts (the main notebooks of the project of course).
+
+# 1: Data cleaning
+
+This stage was a huge step, not only because we had already change our dataset once, but also because not
+all of our computers could process the dataset in the main way (by using the URL), so after some research
+we achieved 3 different method to charge the dataset that always work for the 3 of us, those where: By using
+the TidyTuesdayR package, by installing the dataset locally and by using the URL of the dataset.
+
+After this part and checking that the dataset worked, we could clean it, which was mainly done by the "janitor".
+The janitor parsed the name of the categorical variables so they all have the same structure, so it was the biggest
+part of the cleaning, but of course not everything. Some other changes were dropping the segments column because
+we where assuming only 1 segment per tornado; we changed tz (timezone) attribute so it would be easier to 
+understand (by making the assumption that tz==6 is for Mountain Time states). Another main change was the loss 
+column which
+was confuse and the measures changed in 1996, which make it even worse, so we reworked it to be powers of 5.
+
+Finally, this part ended with a last check of the dataset and saving it into a new CSV file to use it on next 
+notebooks.
+
+# 2: Exploratory Data Analysis (EDA)
+
+This was the biggest part of the project, in which we edited the dataset to have 10 new columns (attributes)
+and we would use them to proccess the info of the dataset using charts.
+
+The attributes took a decent time to figure out some of them: Victims, fatality, area and the economic damage where
+main ideas from the beggining; then we though about the idea of classifing them by time and season (which would 
+make great charts afterwards), which also lead to the classification of magnitude and zone (east, west, etc...). We
+tried with other attributes but the one which stick in was a brief average per state (of magnitude and fatalities).
+
+After that we started with the charts, the first 5 where way easier because we reused the code of the last dataset,
+making informatives charts like the evolution of amount of tornados per year, their fatalities or the amount of 
+tornados per hour/season. All of them were really easy to get ideas because of how we considered the new rows at 
+the beggining, but after some days we where struggling to use better the "State" attribute which was one of the mos
+interesting ones.
+
+We firstly created a different chart of affecteds by state, which was fine but started to look less creative 
+compared to the other ones, so we looked for different packages to created new charts, like the hotmap that 
+presents the frecuency of tornados. Even though it seems easy, it took us a fair time to make work this map.
+
+Once we completed the hotmap, we tried to make work the matrix that relates differents attributes between them, 
+which give us a fair look to the relations between related columns, such us victims and magnitude. And finally, the
+last chart was a graphic that explains the distributions of tornados magnitude per decade, as well as the matrix 
+and hotmap, we spend some time researching about this new type of chart and how to plot it.
+
+# 3: Modeling
+
+
+
+
+# Conclussion
+
+We have been able to learn a lot about how to develop a project and how to choose the dataset to explore it. As we
+have stated before, we started the project using a different dataset, but the attributes were giving us a lot of 
+troubles with the creation of new charts and the modeling because of the distribution of the data, so after some 
+time we decided to reused the most amount of code possible and take the opportunity of changing the dataset to 
+improve everything we have already done (that is the reason why we decide to research about new different types of 
+charts or why we took a lot of time thinking about which new attributes would be useful for them)
+
+Some interesting finding we have done were the curious (or even strange) relation between how the most amount of 
+tornados seems to appear on evening (we even research by our own a little bot without arriving to any conclusion); 
+or by using the models, we found out that *********************.
