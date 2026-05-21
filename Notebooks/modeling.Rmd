@@ -544,6 +544,8 @@ Each coefficient (β) tells us how much `victims_total` changes for each unit in
 ```{r linear model, message=FALSE, warning=FALSE}
 library(MASS) # Required for glm.nb
 
+model_data <- drop_na(model_data)
+
 # Model 1: Linear Regression
 model_linear <- lm(
   victims_total ~ mag + len + wid + season + us_region,
@@ -793,6 +795,29 @@ comparison_full <- data.frame(
 comparison_full %>%
   kable(caption = "Comprehensive Comparison of Tornado Impact Models") %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+```{r comparison, message=FALSE, warning=FALSE}
+library(ggplot2)
+
+# Gráfico de Probabilidades Predichas vs Realidad (Boxplot + Jitter)
+ggplot(model_data, aes(x = as.factor(is_deadly), y = pred_prob, fill = as.factor(is_deadly))) +
+  # Añadimos los puntos reales con algo de ruido (jitter) para ver la densidad
+  geom_jitter(color = "darkgrey", alpha = 0.3, width = 0.2) +
+  # Añadimos un boxplot superpuesto para ver la mediana y los cuartiles
+  geom_boxplot(alpha = 0.6, outlier.shape = NA, color = "black") +
+  # Línea de umbral de decisión (0.5)
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "red", size = 1) +
+  labs(
+    title = "Modelo Logístico: Probabilidades Predichas vs Realidad",
+    subtitle = "La línea roja discontinua representa el umbral de clasificación (50%)",
+    x = "¿Fue realmente mortal? (Realidad)",
+    y = "Probabilidad Predicha de ser Mortal (.pred_prob)",
+    fill = "Realmente Mortal"
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_fill_manual(values = c("FALSE" = "#6D9EC1", "TRUE" = "#E46726")) +
+  theme_minimal() +
+  theme(legend.position = "none")
 ```
 
 ## Conclusions

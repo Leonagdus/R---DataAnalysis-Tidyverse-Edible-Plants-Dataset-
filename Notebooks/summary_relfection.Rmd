@@ -60,7 +60,19 @@ and hotmap, we spend some time researching about this new type of chart and how 
 
 # 3: Modeling
 
+This part also took a fair part of our time, we created and trained two models for the prediction of different 
+variables; in this case, a linear model for the economic loss due to a tornado and its characteristics (such as 
+magnitud or fatalities) and a logistic regression model to predict if a tornado may cause victims.
 
+In the first model we took our time understanding how to create the model and train it, and we had to remake it a few
+times due to we were not capable of plotting a proper solution. But in the first case, we can see that the 
+predictions are pretty solid in relation to the real tornados, and also that the most important variable when 
+predicting the economic loss is the magnitud of the tornado (but also really important the width and length of 
+itself)
+
+In the second model, for predict if a tornado could produce a victim we will again use similar variables. As we can 
+see in the last graphic, our threshold to predict the fatalities is a bit high (or its difficult to predict it with 
+this variables) because we are failing most of the prediction of the fatalities.
 
 
 # Conclussion
@@ -74,4 +86,5 @@ charts or why we took a lot of time thinking about which new attributes would be
 
 Some interesting finding we have done were the curious (or even strange) relation between how the most amount of 
 tornados seems to appear on evening (we even research by our own a little bot without arriving to any conclusion); 
-or by using the models, we found out that *********************.
+or by using the models, we found out that the analisys of the fatality of tornados is way more complex than we could 
+try to predict by our models.
