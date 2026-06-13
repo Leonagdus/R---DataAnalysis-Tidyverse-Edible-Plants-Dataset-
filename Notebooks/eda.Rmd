@@ -28,6 +28,7 @@ library(gt)
 
 ```{r data importation, message=FALSE, warning=FALSE }
 tornados_clean <- read_csv(here("Data", "tornados_clean.csv"))
+tornados_balanced <- read_csv(here("Data", "tornados_balanced.csv"))
 ```
 
 
@@ -78,17 +79,21 @@ dictionary
 
 ```
 
-```{r}
+```{r description, message=FALSE, warning=FALSE}
 # 2. BASIC DESCRIPTIVE STATISTICS
 # We take the most important variables of the dataset
 tornados_clean %>%
   select(mag, len, wid, inj, fat, loss) %>%
   summary()
+
+tornados_balanced %>%
+  select(mag, len, wid, inj, fat, loss) %>%
+  summary()
 ```
 
 
-```{r new column creation, message=FALSE, warning=FALSE}
-# New columns creation
+```{r new column creation linear, message=FALSE, warning=FALSE}
+# New columns creation for Linear Regression
 tornados_clean <- tornados_clean %>%
   # 1. CALCULATED INDICATORS
   mutate(
@@ -149,6 +154,70 @@ tornados_clean <- tornados_clean %>%
   )
 
 glimpse(tornados_clean)
+```
+
+```{r new column creation logistic, message=FALSE, warning=FALSE}
+# New columns creation for Logistic Regression
+tornados_balanced <- tornados_balanced %>%
+  # 1. CALCULATED INDICATORS
+  mutate(
+    victims_total = inj + fat,                                  # 1. Total affected people
+    is_deadly = fat > 0,                                        # 2. Binary death indicator
+    area_sq_mi = (len * (wid / 1760)),                          # 3. Estimated area
+    has_loss = !is.na(loss) & loss > 0                          # 4. Economic damage indicator
+  ) %>%
+  
+  # 2. GROUPED CATEGORIES
+  mutate(
+    season = case_when(                                         # 5. Grouped by season
+      mo %in% c(12, 1, 2) ~ "Winter",
+      mo %in% c(3, 4, 5)  ~ "Spring",
+      mo %in% c(6, 7, 8)  ~ "Summer",
+      mo %in% c(9, 10, 11) ~ "Fall"
+    ),
+    mag_category = case_when(                                   # 6. Intensity grouping (Fujita scale)
+      mag <= 1 ~ "Weak",
+      mag <= 3 ~ "Strong",
+      mag > 3  ~ "Violent",
+      TRUE     ~ "Unknown"
+    )
+  ) %>%
+  
+  # 3. RECODED VARIABLES
+  mutate(
+    us_region = case_when(                                      # 7. State-region recoding
+      st %in% c("CT", "ME", "MA", "NH", "RI", "VT", "NJ", "NY", "PA") ~ "Northeast",
+      st %in% c("IL", "IN", "IA", "KS", "MI", "MN", "MO", "NE", "ND", "OH", "SD", "WI") ~ "Midwest",
+      st %in% c("AL", "AR", "DE", "FL", "GA", "KY", "LA", "MD", "MS", "NC", "OK", "SC", "TN", "TX", "VA", "WV") ~ "South",
+      TRUE ~ "West"
+    )
+  ) %>%
+  
+  # 4. TRANSFORMATIONS
+  mutate(
+    loss_log10 = ifelse(loss > 0, log10(loss), 0),              # 8. Logarithmic transformation of losses
+    mag_factor = factor(mag, levels = 0:5, ordered = TRUE)      # 9. Mag factor ordered
+  ) %>%
+  
+  # 5. AGGREGATED VALUES
+  group_by(yr, st) %>%
+  mutate(
+    state_annual_fat_total = sum(fat, na.rm = TRUE),            # 10. Total death by state in a year
+    state_annual_avg_mag = mean(as.numeric(mag), na.rm = TRUE)  # 11. Average mag by state in a year
+  ) %>%
+  ungroup() %>%
+  
+  # 6. EXTRA
+  mutate(
+    time_of_day = case_when(                                    # 12. Day-time grouping
+      lubridate::hour(datetime_utc) >= 6 & lubridate::hour(datetime_utc) < 12 ~ "Morning",
+      lubridate::hour(datetime_utc) >= 12 & lubridate::hour(datetime_utc) < 18 ~ "Afternoon",
+      lubridate::hour(datetime_utc) >= 18 & lubridate::hour(datetime_utc) < 24 ~ "Evening",
+      TRUE ~ "Night"
+    )
+  )
+
+glimpse(tornados_balanced)
 ```
 
 

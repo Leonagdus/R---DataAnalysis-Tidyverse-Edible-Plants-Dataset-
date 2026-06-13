@@ -28,7 +28,7 @@ library(ggplot2)
 
 ## Load the cleaned dataset
 
-```{r load data, message=FALSE, warning=FALSE}
+```{r load data linear, message=FALSE, warning=FALSE}
 tornados_clean <- read_csv(here("Data", "tornados_clean.csv"))
 glimpse(tornados_clean)
 
@@ -97,10 +97,79 @@ glimpse(tornados_clean)
 
 ```
 
+```{r load data logistic, message=FALSE, warning=FALSE}
+tornados_balanced <- read_csv(here("Data", "tornados_balanced.csv"))
+glimpse(tornados_clean)
+
+# Re-create the engineered columns from EDA (needed for modeling)
+# New columns creation
+tornados_balanced <- tornados_balanced %>%
+  # 1. CALCULATED INDICATORS
+  mutate(
+    victims_total = inj + fat,                                  # 1. Total affected people
+    is_deadly = fat > 0,                                        # 2. Binary death indictor
+    area_sq_mi = (len * (wid / 1760)),                          # 3. Estimated area
+    has_loss = !is.na(loss) & loss > 0                          # 4. Economic damage indicator
+  ) %>%
+  
+  # 2. GROUPED CATEGORIES
+  mutate(
+    season = case_when(                                         # 5. Grouped by season
+      mo %in% c(12, 1, 2) ~ 1,
+      mo %in% c(3, 4, 5)  ~ 2,
+      mo %in% c(6, 7, 8)  ~ 3,
+      mo %in% c(9, 10, 11) ~ 4
+    ),
+    mag_category = case_when(                                   # 6. Agrupación de intensidad (Escala Fujita) Intensity grouping (Fujita scale)
+      mag <= 1 ~ "Weak",
+      mag <= 3 ~ "Strong",
+      mag > 3  ~ "Violent",
+      TRUE     ~ "Unknown"
+    )
+  ) %>%
+  
+  # 3. RECODED VARIABLES
+  mutate(
+    us_region = case_when(                                      # 7. State-region recoding
+      st %in% c("CT", "ME", "MA", "NH", "RI", "VT", "NJ", "NY", "PA") ~ "Northeast",
+      st %in% c("IL", "IN", "IA", "KS", "MI", "MN", "MO", "NE", "ND", "OH", "SD", "WI") ~ "Midwest",
+      st %in% c("AL", "AR", "DE", "FL", "GA", "KY", "LA", "MD", "MS", "NC", "OK", "SC", "TN", "TX", "VA", "WV") ~ "South",
+      TRUE ~ "West"
+    )
+  ) %>%
+  
+  # 4. TRANSFORMATIONS
+  mutate(
+    loss_log10 = ifelse(loss > 0, log10(loss), 0),              # 8. Logarithmic transformation of losses
+    mag_factor = factor(mag, levels = 0:5, ordered = TRUE)      # 9. Mag factor ordered
+  ) %>%
+  
+  # 5. AGGREGATED VALUES
+  group_by(yr, st) %>%
+  mutate(
+    state_annual_fat_total = sum(fat, na.rm = TRUE),            # 10. Total death by state in a year
+    state_annual_avg_mag = mean(as.numeric(mag), na.rm = TRUE)  # 11. Average mag by state in a year
+  ) %>%
+  ungroup() %>%
+  
+  # 6. EXTRA
+  mutate(
+    time_of_day = case_when(                                    # 12. Day-time grouping
+      lubridate::hour(datetime_utc) >= 6 & lubridate::hour(datetime_utc) < 12 ~ "Morning",
+      lubridate::hour(datetime_utc) >= 12 & lubridate::hour(datetime_utc) < 18 ~ "Afternoon",
+      lubridate::hour(datetime_utc) >= 18 & lubridate::hour(datetime_utc) < 24 ~ "Evening",
+      TRUE ~ "Night"
+    )
+  )
+
+glimpse(tornados_clean)
+
+```
 ---
 
 # Research Questions
-1- IS THERE A SIGNIFICANT RELATIONSHIP BETWEEN TWO VARIABLES?
+
+## IS THERE A SIGNIFICANT RELATIONSHIP BETWEEN TWO VARIABLES?
 We will observe if there is a relationship between the "magnitude" and the "victims_total" (injuries+fatalities)
 ```{r}
 # We are going to take less rows, not the 68000 that it has.
@@ -123,7 +192,6 @@ mag_victims
 victimas_por_magnitud <- tornados_plot_5000 %>%
   group_by(mag) %>%
   summarise(total_victimas = sum(victims_total, na.rm = TRUE)) %>%
-  # Opcional: eliminar posibles magnitudes extrañas si las hay
   filter(!is.na(mag))
 
 victimas_por_magnitud
@@ -131,9 +199,8 @@ victimas_por_magnitud
 ```{r}
 ggplot(victimas_por_magnitud, aes(x = factor(mag), y = total_victimas, fill = factor(mag))) +
   geom_col() +
-  # Añadimos etiquetas de texto arriba de las barras para que se vea profesional
   geom_text(aes(label = total_victimas), vjust = -0.5) + 
-  scale_fill_brewer(palette = "Reds") + # Un degradado de rojos (más peligro = más rojo)
+  scale_fill_brewer(palette = "Reds") +
   labs(
     title = "Total sum of victims by Tornado Magnitude",
     subtitle = "Data from 1950-2022",
@@ -155,7 +222,6 @@ worse_tornados <- tornados_clean %>%
   summarise(max_victimas = max(victims_total, na.rm = TRUE)) %>%
   filter(!is.na(mag))
 
-# Ver los récords en la consola
 worse_tornados
 
 
@@ -209,7 +275,8 @@ ggcorrplot(corr_matrix,
 # We can see some relations following the color scale.
 ```
 
-2- CAN ONE VARIABLE BE PREDICTED BASED ON OTHERS?
+## PREPARATION OF DATA
+
 ```{r}
 library(tidyverse)
 library(scales) # Required for better axis labels
@@ -228,9 +295,7 @@ data_model <- tornados_clean %>%
 model_log <- lm(log(loss + 1) ~ mag + len + wid, data = data_model)
 
 # Print the statistical summary
-# LOOK FOR: 'Adjusted R-squared' (model quality) and 'Pr(>|t|)' (significance)
 summary(model_log)
-
 # In this case, the error will be higher because we did not ignored the 0 loss tornados and disturbed the model
 ```
 
@@ -261,30 +326,19 @@ ggplot(data_damage_only, aes(x = mag, y = loss)) +
   theme_minimal()
 ```
 
-3- WHICH FACTORS SEEM TO MATTER MOST FOR A SELECTED OUTCOME?
-```{r}
-# In the previous summary of data, we have a clear example o fwhich atribute is more important in an outcome (in this case inn "losses")
+## WHICH FACTORS SEEM TO MATTER MOST FOR A SELECTED OUTCOME?
+In the previous summary of data, we have a clear example o fwhich atribute is more important in an outcome (in this case inn "losses")
 
-# Coefficients:
-#             Estimate Std. Error t value Pr(>|t|)    
-# (Intercept) 9.134522   0.016992   537.6   <2e-16 ***
-# mag         1.358654   0.013264   102.4   <2e-16 ***
-# len         0.041670   0.001255    33.2   <2e-16 ***
+Coefficients:
+            Estimate Std. Error t value Pr(>|t|)    
+(Intercept) 9.134522   0.016992   537.6   <2e-16 ***
+mag         1.358654   0.013264   102.4   <2e-16 ***
+len         0.041670   0.001255    33.2   <2e-16 ***
 
-# The "t value" represents the "importance" of that atribute on the outcome.
-# In this case, mag is the most important (following the results of the damage model (the second one))
-```
+The "t value" represents the "importance" of that atribute on the outcome.
+In this case, mag is the most important (following the results of the damage model (the second one))
 
-
-```{r}
-# SECOND PART
-
-# Then build at least two different models using methods discussed during the course.
-# Possible examples include:
-# linear regression,
-# logistic regression,
-# or other relevant methods introduced in class.
-```
+## CAN ONE VARIABLE BE PREDICTED BASED ON OTHERS? (LinReg)
 
 ```{r}
 # We will make a LINEAR REGRESSION on predict the amount of LOSS
@@ -296,39 +350,39 @@ tornados_modeling <- tornados_clean %>%
   drop_na()
 
 # ==========================================
-# 2. DATA SPLITTING (rsample)
+# DATA SPLITTING
 # ==========================================
 tornado_split <- initial_split(tornados_modeling, prop = 0.8)
 tornado_train <- training(tornado_split)
 tornado_test  <- testing(tornado_split)
 
 # ==========================================
-# 3. RECIPE SPECIFICATION (recipes)
+# RECIPE SPECIFICATION
 # ==========================================
 # Like in the notebooks, define the formula and normalize
 lm_recipe <- recipe(loss_log10 ~ mag + len + wid + season + area_sq_mi, data = tornado_train) %>%
   step_normalize(all_predictors())
 
 # ==========================================
-# 4. MODEL SPECIFICATION (parsnip)
+# MODEL SPECIFICATION
 # ==========================================
 lm_spec <- linear_reg() %>%
   set_engine("lm")
 
 # ==========================================
-# 5. WORKFLOW CREATION (workflows)
+# WORKFLOW CREATION
 # ==========================================
 lm_wflow <- workflow() %>%
   add_recipe(lm_recipe) %>%
   add_model(lm_spec)
 
 # ==========================================
-# 6. MODEL FITTING
+# MODEL FITTING
 # ==========================================
 lm_fit <- fit(lm_wflow, data = tornado_train)
 
 # ==========================================
-# 7. EVALUATION (yardstick)
+# EVALUATION
 # ==========================================
 # We make predicitins in the test data as in the exercises
 lm_predictions <- predict(lm_fit, new_data = tornado_test) %>%
@@ -338,13 +392,12 @@ lm_predictions <- predict(lm_fit, new_data = tornado_test) %>%
 metrics_lm <- metrics(lm_predictions, truth = loss_log10, estimate = .pred)
 print(metrics_lm)
 ```
-```{r}
-# Explication of this data:
-#"rmse" and "mae" are error metrics
-# "rmse" first error^2, then square and then average
-# "mae" its simiple. Sums all the error commited and makes an average
-# "rsq" its 28%, and means that our atriburtes explain the 28% of variability of the results
-```
+
+Explication of this data:
+"rmse" and "mae" are error metrics
+"rmse" first error^2, then square and then average
+"mae" its simiple. Sums all the error commited and makes an average
+"rsq" its 28%, and means that our atriburtes explain the 28% of variability of the results
 
 ```{r}
 library(ggplot2)
@@ -362,24 +415,22 @@ ggplot(lm_predictions, aes(x = loss_log10, y = .pred)) +
   ) +
   theme_minimal()
 ```
-```{r}
-# When more blue points (reality cases of test) are closer to the red line (prediction), better is the model
-```
+
+When more blue points (reality cases of test) are closer to the red line (prediction), better is the model
 
 ```{r}
 lm_fit %>% 
   extract_fit_parsnip() %>% 
   tidy()
 ```
-```{r}
-# `estimate`**: The weight (coefficient). It indicates how much the model's prediction changes for each one-unit increase in that specific variable.
 
-# `std.error`**: The standard error of the estimate. It measures the margin of error for that weight; the smaller it is, the more precise the model's calculation.
+`estimate`**: The weight (coefficient). It indicates how much the model's prediction changes for each one-unit increase in that specific variable.
 
-# `statistic`**: The t-statistic (or t-value), which serves as our "importance ranking." It is calculated by dividing the `estimate` by the `std.error`.
+`std.error`**: The standard error of the estimate. It measures the margin of error for that weight; the smaller it is, the more precise the model's calculation.
 
-# `p.value`**: The statistical significance threshold. If this value is below 0.05 (in your output it displays as 0, meaning it is infinitely small), the variable is 100% statistically significant and the relationship is not due to random chance.
-```
+`statistic`**: The t-statistic (or t-value), which serves as our "importance ranking." It is calculated by dividing the `estimate` by the `std.error`.
+
+`p.value`**: The statistical significance threshold. If this value is below 0.05 (in your output it displays as 0, meaning it is infinitely small), the variable is 100% statistically significant and the relationship is not due to random chance.
 
 ```{r}
 library(vip)
@@ -392,19 +443,20 @@ lm_fit %>%
   theme_minimal()
 ```
 
+## CAN ONE VARIABLE BE PREDICTED BASED ON OTHERS? (LogReg)
+
 ```{r}
 # We will make a LOGISTIC REGRESSION on predict if the tornado will cause any VICTIM
 # ==========================================
-# 1. SETTING UP DATA FOR CLASSIFICATION
+# SETTING UP DATA FOR CLASSIFICATION
 # ==========================================
-tornados_class <- tornados_clean %>%
-  # Convertimos el campo lógico en factor ("TRUE" -> tipo categoría)
+tornados_class <- tornados_balanced %>%
   mutate(is_deadly = as.factor(is_deadly)) %>% 
   dplyr::select(is_deadly, mag, len, wid, season, area_sq_mi) %>%
   drop_na()
 
 # ==========================================
-# 2. DATA SPLITTING
+# DATA SPLITTING
 # ==========================================
 set.seed(123)
 class_split <- initial_split(tornados_class, prop = 0.8)
@@ -412,45 +464,43 @@ class_train <- training(class_split)
 class_test  <- testing(class_split)
 
 # ==========================================
-# 3. RECIPE SPECIFICATION
+# RECIPE SPECIFICATION
 # ==========================================
-# Definimos que queremos predecir is_deadly
+# Like in the notebooks, define the formula and normalize
 logit_recipe <- recipe(is_deadly ~ mag + len + wid + season + area_sq_mi, data = class_train) %>%
   step_normalize(all_predictors())
 
 # ==========================================
-# 4. MODEL SPECIFICATION (Aquí cambia a clasificación)
+# MODEL SPECIFICATION
 # ==========================================
 logit_spec <- logistic_reg() %>%
   set_engine("glm") %>%
-  set_mode("classification") # ¡Paso clave de tus apuntes!
+  set_mode("classification")
 
 # ==========================================
-# 5. WORKFLOW CREATION
+# WORKFLOW CREATION
 # ==========================================
 logit_wflow <- workflow() %>%
   add_recipe(logit_recipe) %>%
   add_model(logit_spec)
 
 # ==========================================
-# 6. MODEL FITTING
+# MODEL FITTING
 # ==========================================
 logit_fit <- fit(logit_wflow, data = class_train)
 
 # ==========================================
-# 7. EVALUATION (Matriz de confusión y Accuracy)
+# EVALUATION
 # ==========================================
-# En clasificación tus notebooks piden predecir la clase (.pred_class)
+# We make predicitins in the test data as in the exercises
 logit_predictions <- predict(logit_fit, new_data = class_test) %>%
   bind_cols(class_test)
 
-# Evaluamos con la matriz de confusión exacta que te piden en los ejercicios
 conf_matrix <- logit_predictions %>%
   conf_mat(truth = is_deadly, estimate = .pred_class)
 
 print(conf_matrix)
 
-# Calculamos la precisión global (Accuracy)
 accuracy_logit <- logit_predictions %>%
   accuracy(truth = is_deadly, estimate = .pred_class)
 
@@ -475,354 +525,3 @@ conf_matrix %>%
 
 3. **Can we predict whether a tornado will be deadly** (at least one fatality) based on its characteristics?  
    → Answered with **Logistic Regression**.
-
----
-
-# Data Preparation for Modeling
-
-```{r model data, message=FALSE, warning=FALSE}
-# Select and filter the variables we will use
-model_data <- tornados_clean %>%
-  dplyr::select(
-    victims_total,
-    is_deadly,
-    mag,
-    len,
-    wid,
-    area_sq_mi,
-    season,
-    us_region,
-    mag_category
-  ) %>%
-  filter(
-    !is.na(victims_total),
-    !is.na(mag),
-    !is.na(len),
-    !is.na(wid),
-    !is.na(season),
-    !is.na(us_region)
-  )
-
-cat("Rows available for modeling:", nrow(model_data), "\n")
-cat("Columns used:", ncol(model_data), "\n")
-```
-
----
-
-# First models — Linear Regression
-
-## Victims Analysis
-
-First we are going to see how the victmis are distributed along the different ranges
-
-```{r}
-ggplot(tornados_clean, aes(x = victims_total)) + 
-  geom_histogram() + 
-  scale_y_log10()
-```
-
-## Why these variables?
-
-We want to predict `victims_total` (injuries + fatalities), which is a **continuous numeric variable**. We use:
-
-- `mag` → tornado magnitude on the Fujita scale: more powerful tornadoes are expected to cause more damage.
-- `len` → path length in miles: longer paths affect more area and more people.
-- `wid` → width in yards: wider tornadoes cover more surface.
-- `season` → time of year: tornadoes in Spring tend to be more intense.
-- `us_region` → geographic region: the South and Midwest are more densely affected.
-
-## How the model works
-
-Linear regression finds the equation:
-
-```
-victims_total = β0 + β1*mag + β2*len + β3*wid + β4*season + β5*us_region + ε
-```
-
-Each coefficient (β) tells us how much `victims_total` changes for each unit increase in that variable, holding the rest constant.
-
-```{r linear model, message=FALSE, warning=FALSE}
-library(MASS) # Required for glm.nb
-
-model_data <- drop_na(model_data)
-
-# Model 1: Linear Regression
-model_linear <- lm(
-  victims_total ~ mag + len + wid + season + us_region,
-  data = model_data
-)
-
-# Model 2: Poisson Regression
-model_poisson <- glm(
-  victims_total ~ mag + len + wid + season + us_region,
-  family = poisson(link = "log"),
-  data = model_data
-)
-
-# Model 3: Negative Binomial Regression
-model_negbinom <- glm.nb(
-  victims_total ~ mag + len + wid + season + us_region,
-  data = model_data
-)
-
-# Model comparison
-performance_comparison <- performance::compare_performance(
-  model_linear, model_poisson, model_negbinom, 
-  rank = TRUE
-)
-
-summary(model_linear)
-summary(model_poisson)
-summary(model_negbinom)
-```
-
-## Coefficient interpretation
-
-```{r linear coef, message=FALSE, warning=FALSE}
-tidy(model_linear) %>%
-  mutate(
-    significant = ifelse(p.value < 0.05, "Yes**", "No")
-  ) %>%
-  kable(digits = 4, caption = "Linear Regression Coefficients") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
-
-tidy(model_poisson) %>%
-  mutate(
-    significant = ifelse(p.value < 0.05, "Yes**", "No")
-  ) %>%
-  kable(digits = 4, caption = "Poisson Regression Coefficients (Log-Link)") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
-
-tidy(model_negbinom) %>%
-  mutate(
-    significant = ifelse(p.value < 0.05, "Yes**", "No")
-  ) %>%
-  kable(digits = 4, caption = "Negative Binomial Regression Coefficients") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
-```
-
-**How to read the table:**
-
-- `estimate` → for each unit increase in that variable, victims_total changes by this amount.
-- `std.error` → the variance of the estiamation. The smaller it is with respect to the estimate the better.
-- `statistic` → how much bigger is the estimate than the error. Above 2 is a good indicator.
-- `p.value` → if below 0.05, the variable has a statistically significant effect.
-
-- Variables marked **Yes** are meaningful predictors and in **No** variables there is not enough statistical evidence.
-- For reference: in the group of season terms, the comparison is done with respect to Fall.
-- For reference: in the group of region terms, the comparison is done with respect to Midwest.
-
-## Model quality
-
-```{r linear quality, message=FALSE, warning=FALSE}
-glance(model_linear) %>%
-  dplyr::select(AIC, BIC, deviance, logLik, df.residual) %>%
-  kable(digits = 4, caption = "Linear Model Quality Metrics") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
-
-glance(model_poisson) %>%
-  dplyr::select(AIC, BIC, deviance, logLik, df.residual) %>%
-  kable(digits = 4, caption = "Poisson Model Quality Metrics") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
-
-glance(model_negbinom) %>%
-  dplyr::select(AIC, BIC, deviance, logLik, df.residual) %>%
-  kable(digits = 4, caption = "Negative Binomial Model Quality Metrics") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
-```
-
-```{r}
-compare_performance(model_linear, model_poisson, model_negbinom) %>%
-  kable(digits = 4, caption = "Global Model Comparison (Linear vs Poisson vs NegBin)") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"))
-```
-
-**How to read:**
-
-- `AIC (Akaike Information Criterion)` estimates the relative amount of infomration lost by a model (the lower the better).
-- `AIC_wt` the best model to pick.
-- `BIC (Bayesian Information Cirterio)` simialr to AIC but with stronger penalty for including additional parameters (the lower the better).
-- `BIC_wt` the best model to pick.
-- `RMSE (Root Mean Square Error)` gives error at the prediction with respect to the real values observed.
-- `Sigma` standard deviation
-- `R2_Nagelkerke` is and adaptation of R2 of linear models to GLM (Generalised Linear Model). The lower the better.
-- `R2 / R2_adjusted` explains how good is the model and its "goodness-of-fit".
-
-## Diagnostic plots
-
-```{r linear diagnostics, message=FALSE, warning=FALSE}
-diag_plot <- performance::check_model(model_linear)
-
-diag_plot_visual <- plot(diag_plot)
-
-ggsave(
-  filename = here("Outputs", "lin_reg_model_diagnostics.png"),
-  plot = diag_plot_visual,
-  width = 12,
-  height = 10,
-  dpi = 1000
-)
-
-diag_poisson <- performance::check_model(model_poisson)
-p_diag_poisson <- plot(diag_poisson)
-
-ggsave(
-  filename = here("Outputs", "poisson_diagnostics.png"),
-  plot = p_diag_poisson,
-  width = 15, height = 12, dpi = 1000
-)
-
-diag_negbinom <- performance::check_model(model_negbinom)
-p_diag_negbinom <- plot(diag_negbinom)
-
-ggsave(
-  filename = here("Outputs", "negbinom_diagnostics.png"),
-  plot = p_diag_negbinom,
-  width = 15, height = 12, dpi = 1000
-)
-
-```
-
-# Model 2 — Logistic Regression
-
-## Why these variables?
-
-We want to predict `is_deadly` (TRUE/FALSE — did the tornado kill anyone?), which is a **binary variable**. This requires logistic regression instead of linear regression.
-
-We use the same predictors as before since they describe the tornado's physical intensity, which is directly related to its lethality.
-
-## How the model works
-
-Logistic regression models the **probability** that `is_deadly = TRUE`:
-
-```
-log(P/(1-P)) = β0 + β1*mag + β2*len + β3*wid + β4*season + β5*us_region
-```
-
-The output is always a probability between 0 and 1. We use `family = binomial` to tell R this is logistic regression.
-
-```{r logistic model, message=FALSE, warning=FALSE}
-model_logistic <- glm(
-  is_deadly ~ mag + len + wid + season + us_region,
-  data = model_data,
-  family = binomial
-)
-
-summary(model_logistic)
-```
-
-## Coefficient interpretation (Odds Ratios)
-
-In logistic regression, coefficients are interpreted as **odds ratios** after applying `exp()`:
-
-```{r logistic coef, message=FALSE, warning=FALSE}
-tidy(model_logistic) %>%
-  mutate(
-    odds_ratio  = exp(estimate),
-    significant = ifelse(p.value < 0.05, "Yes ***", "No")
-  ) %>%
-  dplyr::select(term, estimate, odds_ratio, p.value, significant) %>%
-  kable(digits = 4, caption = "Logistic Regression — Odds Ratios") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"))
-```
-
-**How to read odds ratios:**
-
-- `odds_ratio > 1` → that variable **increases** the probability of a deadly tornado.
-- `odds_ratio < 1` → that variable **decreases** the probability.
-- `odds_ratio = 1` → no effect.
-
-For example, if `mag` has an odds ratio of 2.5, each additional Fujita scale point multiplies the odds of a deadly tornado by 2.5.
-
-## Model quality
-
-```{r logistic quality, message=FALSE, warning=FALSE}
-glance(model_logistic) %>%
-  dplyr::select(null.deviance, deviance, AIC, BIC) %>%
-  kable(digits = 2, caption = "Logistic Model Quality Metrics") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"))
-```
-
-**How to read:**
-
-- `AIC` / `BIC` → lower is better. Used to compare models of the same type.
-- `deviance` → how well the model fits. Lower deviance vs `null.deviance` means improvement over a model that predicts nothing.
-
-```{r logistic accuracy, message=FALSE, warning=FALSE}
-# Predicted probabilities and classification
-model_data <- model_data %>%
-  mutate(
-    pred_prob    = predict(model_logistic, type = "response"),
-    pred_deadly  = pred_prob > 0.5
-  )
-
-# Confusion matrix
-conf_matrix <- table(
-  Predicted = model_data$pred_deadly,
-  Actual    = model_data$is_deadly
-)
-
-conf_matrix %>%
-  kable(caption = "Confusion Matrix — Logistic Model") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"))
-
-# Overall accuracy
-accuracy <- mean(model_data$pred_deadly == model_data$is_deadly, na.rm = TRUE)
-cat("Model accuracy:", round(accuracy * 100, 2), "%\n")
-```
-
-**How to read the confusion matrix:**
-
-- **True Positives** (top-left): correctly predicted deadly tornadoes.
-- **True Negatives** (bottom-right): correctly predicted non-deadly tornadoes.
-- **False Positives**: predicted deadly but wasn't.
-- **False Negatives**: predicted not deadly but it was.
-
----
-
-# Model Comparison
-
-```{r comparison, message=FALSE, warning=FALSE}
-comparison_full <- data.frame(
-  Model              = c("Linear Regression", "Logistic Regression", "Poisson Regression", "Negative Binomial"),
-  Dependent_Variable  = c("log(victims_total + 1)", "is_deadly (binary)", "victims_total (counts)", "victims_total (counts)"),
-  R_Function         = c("lm()", "glm(..., family=binomial)", "glm(..., family=poisson)", "glm.nb()"),
-  Question_Answered  = c("How much does Y change?", "Will it be deadly (Yes/No)?", "What is the expected count?", "What is the count (with outliers)?"),
-  Quality_Metric     = c("R² / Adj R²", "Accuracy / AIC", "AIC / Deviance", "AIC / BIC / Dispersion"),
-  Interpretation     = c("Direct coefficients", "Odds Ratios", "Incident Rate Ratios", "Incident Rate Ratios")
-)
-
-comparison_full %>%
-  kable(caption = "Comprehensive Comparison of Tornado Impact Models") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
-```
-```{r comparison, message=FALSE, warning=FALSE}
-library(ggplot2)
-
-# Gráfico de Probabilidades Predichas vs Realidad (Boxplot + Jitter)
-ggplot(model_data, aes(x = as.factor(is_deadly), y = pred_prob, fill = as.factor(is_deadly))) +
-  # Añadimos los puntos reales con algo de ruido (jitter) para ver la densidad
-  geom_jitter(color = "darkgrey", alpha = 0.3, width = 0.2) +
-  # Añadimos un boxplot superpuesto para ver la mediana y los cuartiles
-  geom_boxplot(alpha = 0.6, outlier.shape = NA, color = "black") +
-  # Línea de umbral de decisión (0.5)
-  geom_hline(yintercept = 0.5, linetype = "dashed", color = "red", size = 1) +
-  labs(
-    title = "Modelo Logístico: Probabilidades Predichas vs Realidad",
-    subtitle = "La línea roja discontinua representa el umbral de clasificación (50%)",
-    x = "¿Fue realmente mortal? (Realidad)",
-    y = "Probabilidad Predicha de ser Mortal (.pred_prob)",
-    fill = "Realmente Mortal"
-  ) +
-  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
-  scale_fill_manual(values = c("FALSE" = "#6D9EC1", "TRUE" = "#E46726")) +
-  theme_minimal() +
-  theme(legend.position = "none")
-```
-
-## Conclusions
-
-- **Linear Regression (Log-Transformed)**: This model serves as our baseline. By applying a log(y+1) transformation, we reveal how physical characteristics (magnitude, length, width) predict the scale of the impact. It is highly interpretable for general planning, telling us, for example, that a 1-unit increase in magnitude corresponds to a specific percentage increase in victims.
-- **Poisson Regression**: This is our first specialized "count model." It assumes that the number of victims follows a Poisson distribution where the mean equals the variance. While it provides Incident Rate Ratios (IRR)—telling us how much each factor multiplies the expected number of victims—it often struggles with "Overdispersion" in tornado data (where rare, catastrophic events create more variance than the model expects).
-- **Negative Binomial Regression**: This is the "Gold Standard" for our dataset. It functions like the Poisson model but includes an extra parameter to handle the extreme variance and "long tail" of deadly tornadoes. By successfully modeling the high number of zeros (non-deadly tornadoes) alongside rare mass-casualty events, it provides the most mathematically honest and accurate estimates of casualty counts.```
-- **Logistic Regression**: Instead of predicting "how many," this model answers the binary question: "Will this tornado be deadly?" By calculating Odds Ratios ($exp(\beta)$), it allows us to classify risk. This is the most operationally useful tool for emergency services and early warning systems, where a "Yes/No" threshold is needed to trigger specific evacuation protocols.

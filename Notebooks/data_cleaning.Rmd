@@ -203,6 +203,25 @@ write_csv(
 )
 ```
 
+```{r balancing, message=FALSE, warning=FALSE}
+n_mortales <- tornados_clean %>% 
+  filter(fat > 0) %>% 
+  nrow()
+
+tornados_balanced <- tornados_clean %>%
+  mutate(is_deadly = fat > 0) %>%
+  group_by(is_deadly) %>%
+  slice_sample(n = n_mortales) %>%
+  ungroup()
+
+table(tornados_balanced$is_deadly)
+
+write_csv(
+  tornados_balanced,
+  here("Data", "tornados_balanced.csv")
+)
+```
+
 ```{r}
 sum(is.na(tornados_clean$mag))
 sum(is.na(tornados_clean$loss))
