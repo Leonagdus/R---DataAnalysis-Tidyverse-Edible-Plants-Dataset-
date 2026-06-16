@@ -72,7 +72,11 @@ itself)
 
 In the second model, for predict if a tornado could produce a victim we will again use similar variables. As we can 
 see in the last graphic, our threshold to predict the fatalities is a bit high (or its difficult to predict it with 
-this variables) because we are failing most of the prediction of the fatalities.
+this variables) because we are failing most of the prediction of the 
+
+After some time, we also decided to edit slightly both models, due to the mayority of certain data (for example, most
+of the tornados weren't mortal) we decided to edit the data so the model doesn't get lazy; in this moment, the 
+accuracy is a bit lower (around 10% less) but the model is way more interesting in a set of various data.
 
 
 # Conclussion
