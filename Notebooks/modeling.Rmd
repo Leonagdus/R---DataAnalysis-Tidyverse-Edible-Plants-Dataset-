@@ -12,7 +12,13 @@ output:
 
 # Introduction
 
-In this section we build statistical models to go beyond description and answer concrete analytical questions about tornadoes in the United States.
+In this section we will do:
+- Preparation of data (specially done in "eda")
+- Search for relations between variables (we will notice a "problem" on the correlation-matrix method: PEARSON or SPEARMAN)
+- Regression models and result analysis of data
+- Comparassion and interpretation of model results and errors
+- Multiple variable regression model and comparation with single ones
+- Logistic regression (noticing some errors and correcting then, as balancing)
 
 ## Setup
 
@@ -24,13 +30,16 @@ library(kableExtra)
 library(broom)
 library(dplyr)
 library(ggplot2)
+library(patchwork)
+library(ggeffects)
+library(cvms)
+library(tibble)
 ```
 
 ## Load the cleaned dataset
 
 ```{r load data linear, message=FALSE, warning=FALSE}
 tornados_clean <- read_csv(here("Data", "tornados_clean.csv"))
-glimpse(tornados_clean)
 
 # Re-create the engineered columns from EDA (needed for modeling)
 # New columns creation
@@ -93,435 +102,1085 @@ tornados_clean <- tornados_clean %>%
     )
   )
 
-glimpse(tornados_clean)
+#glimpse(tornados_clean)
 
 ```
 
-```{r load data logistic, message=FALSE, warning=FALSE}
-tornados_balanced <- read_csv(here("Data", "tornados_balanced.csv"))
-glimpse(tornados_clean)
-
-# Re-create the engineered columns from EDA (needed for modeling)
-# New columns creation
-tornados_balanced <- tornados_balanced %>%
-  # 1. CALCULATED INDICATORS
-  mutate(
-    victims_total = inj + fat,                                  # 1. Total affected people
-    is_deadly = fat > 0,                                        # 2. Binary death indictor
-    area_sq_mi = (len * (wid / 1760)),                          # 3. Estimated area
-    has_loss = !is.na(loss) & loss > 0                          # 4. Economic damage indicator
-  ) %>%
-  
-  # 2. GROUPED CATEGORIES
-  mutate(
-    season = case_when(                                         # 5. Grouped by season
-      mo %in% c(12, 1, 2) ~ 1,
-      mo %in% c(3, 4, 5)  ~ 2,
-      mo %in% c(6, 7, 8)  ~ 3,
-      mo %in% c(9, 10, 11) ~ 4
-    ),
-    mag_category = case_when(                                   # 6. Agrupación de intensidad (Escala Fujita) Intensity grouping (Fujita scale)
-      mag <= 1 ~ "Weak",
-      mag <= 3 ~ "Strong",
-      mag > 3  ~ "Violent",
-      TRUE     ~ "Unknown"
-    )
-  ) %>%
-  
-  # 3. RECODED VARIABLES
-  mutate(
-    us_region = case_when(                                      # 7. State-region recoding
-      st %in% c("CT", "ME", "MA", "NH", "RI", "VT", "NJ", "NY", "PA") ~ "Northeast",
-      st %in% c("IL", "IN", "IA", "KS", "MI", "MN", "MO", "NE", "ND", "OH", "SD", "WI") ~ "Midwest",
-      st %in% c("AL", "AR", "DE", "FL", "GA", "KY", "LA", "MD", "MS", "NC", "OK", "SC", "TN", "TX", "VA", "WV") ~ "South",
-      TRUE ~ "West"
-    )
-  ) %>%
-  
-  # 4. TRANSFORMATIONS
-  mutate(
-    loss_log10 = ifelse(loss > 0, log10(loss), 0),              # 8. Logarithmic transformation of losses
-    mag_factor = factor(mag, levels = 0:5, ordered = TRUE)      # 9. Mag factor ordered
-  ) %>%
-  
-  # 5. AGGREGATED VALUES
-  group_by(yr, st) %>%
-  mutate(
-    state_annual_fat_total = sum(fat, na.rm = TRUE),            # 10. Total death by state in a year
-    state_annual_avg_mag = mean(as.numeric(mag), na.rm = TRUE)  # 11. Average mag by state in a year
-  ) %>%
-  ungroup() %>%
-  
-  # 6. EXTRA
-  mutate(
-    time_of_day = case_when(                                    # 12. Day-time grouping
-      lubridate::hour(datetime_utc) >= 6 & lubridate::hour(datetime_utc) < 12 ~ "Morning",
-      lubridate::hour(datetime_utc) >= 12 & lubridate::hour(datetime_utc) < 18 ~ "Afternoon",
-      lubridate::hour(datetime_utc) >= 18 & lubridate::hour(datetime_utc) < 24 ~ "Evening",
-      TRUE ~ "Night"
-    )
-  )
-
-glimpse(tornados_clean)
-
-```
 ---
 
 # Research Questions
 
-## IS THERE A SIGNIFICANT RELATIONSHIP BETWEEN TWO VARIABLES?
-We will observe if there is a relationship between the "magnitude" and the "victims_total" (injuries+fatalities)
-```{r}
-# We are going to take less rows, not the 68000 that it has.
-# For example the first 5000
-tornados_plot_5000 <- tornados_clean %>%
-  slice_head(n = 5000)
+## IS THERE A SIGNIFICANT RELATIONSHIP BETWEEN TWO VARIABLES???
+The fisrt relation I thougth about is injuries ~ victims (an obvious one) and guided by curiosity, made a bar chart about the proportion of injuries and victims in the tornados
 
-tornados_plot_5000
-```
-
+**BARS CHART -> victims_total~injuries~fatalities**
 ```{r}
-# We use "jitter" intead of "geom_point" to avoid overlaping data on the chart (jitter adds a little noise in each point to move them away from others) to allow the user to analyze it better
-mag_victims <- tornados_plot_5000 %>% ggplot(aes(x = mag, y = victims_total)) +
-  geom_jitter(alpha = 0.4, color = "steelblue")
-mag_victims
-```
-```{r}
-# Now, we will make antoher type of chart to can compare better at one sight.
-# We will have all the victims of each type of "mag" and represent it with bars to see if it is ascending as we can imagine (as more "mag", more "victims", we could think)
-victimas_por_magnitud <- tornados_plot_5000 %>%
+# Group by "mag" for clear analysis by plot and give values about (injuries + fatalities)
+tornados_resumen <- tornados_clean %>%
   group_by(mag) %>%
-  summarise(total_victimas = sum(victims_total, na.rm = TRUE)) %>%
-  filter(!is.na(mag))
+  summarise(
+    Injuries = sum(inj, na.rm = TRUE),
+    Fatalities = sum(fat, na.rm = TRUE)
+  ) %>%
+  pivot_longer(
+    cols = c(Injuries, Fatalities), 
+    names_to = "Tipo_Victima", 
+    values_to = "Cantidad"
+  )
+tornados_resumen
 
-victimas_por_magnitud
-```
-```{r}
-ggplot(victimas_por_magnitud, aes(x = factor(mag), y = total_victimas, fill = factor(mag))) +
-  geom_col() +
-  geom_text(aes(label = total_victimas), vjust = -0.5) + 
-  scale_fill_brewer(palette = "Reds") +
+# 3. Crete chart
+ggplot(tornados_resumen, aes(x = factor(mag), y = Cantidad, fill = Tipo_Victima)) +
+  geom_bar(stat = "identity", position = "stack") +
   labs(
-    title = "Total sum of victims by Tornado Magnitude",
-    subtitle = "Data from 1950-2022",
-    x = "Mag (Scale F/EF)",
-    y = "Total sum of victims (Injuries + Fatalities)",
+    title = "Tornado victims by magnitude",
+    subtitle = "Total Injuries and Fatalities",
+    x = "Tornado magnitude (mag)",
+    y = "Total victims",
+    fill = "Victim type"
+  ) +
+  scale_fill_manual(values = c("Fatalities" = "#d95f02", "Injuries" = "#7570b3")) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text = element_text(size = 11)
+  )
+```
+
+
+After this, to search for relations between variables we went to the correlation matrix of the "eda".
+
+# 1. Analysis of relation ---> "loss_log10" ~ "mag".
+**REGRESSION MODEL** ---> Precits losses ("loss_log10") by only knowing the magnitude ("mag")
+
+
+```{r}
+
+# 1. RELATION CHART
+# With factor mag, we make "mag" categorical, not continuious
+ggplot(tornados_clean, aes(x = factor(mag), y = loss_log10, fill = factor(mag))) +
+  # Add the violin chart
+  geom_violin(alpha = 0.5, trim = FALSE) +    # aplha for transparency, trim to cut the violin queues
+  # Add a thin black boxplot to see the medians
+  geom_boxplot(width = 0.1, color = "black", fill = "white", outlier.shape = NA) +  # we dont represent the outliers
+  labs(
+    title = "Economic LOSSES(log10) by tornado MAGNITUDE",
+    x = "Tornado magnitude",
+    y = "Losses (Log10 USD)"
+  ) +
+  
+  scale_fill_brewer(palette = "Reds") + 
+  
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text = element_text(size = 11)
+  )
+
+```
+We can see some relation but we will confirm it with data, not only plot
+
+
+
+
+Definition, Data and Representation of the REGRESSION MODEL
+
+```{r}
+# MODEL
+modelo_perdidas <- lm(loss_log10 ~ mag, data = tornados_clean)
+
+# MODEL DATA
+summary(modelo_perdidas)
+
+# MODEL CHART
+ggplot(tornados_clean, aes(x = mag, y = loss_log10)) + # not "factor(mag)" because is linear regression
+  geom_jitter(alpha = 0.15, color = "firebrick", width = 0.2) + # adds a little horizontal noise to avoid all the points be the same position. To be more visible
+  geom_smooth(method = "lm", color = "black", se = TRUE, size = 1) +  # draws the regression line over the points
+  theme_minimal() +
+  labs(
+    title = "Linear Regression Model: Magnitude vs. Economic Losses",
+    subtitle = "Estimated trend line for financial impact (Log10 Scale)",
+    x = "Tornado Magnitude (mag)",
+    y = "Economic Losses (Log10 USD)"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14)
+  )
+```
+1Q -> The 25% of residuals are <= than 0.0123
+Median -> The 50% of residuals are <= than 0.0123
+3Q -> The 75% of residuals are <= than 0.1936
+
+
+
+Estimate -> Coefficent value. 
+            When "mag=0", "economic losses" = 3.987658.
+            And each unit magnitude increases, "economic losses" increase 0.663884
+            
+Std.Error -> Uncertainty of the "estimate" value.
+
+t value -> "Estimate / Std.Value"
+
+Pr(>|t|) -> Represents the chances of that coefficent being random. If it is < 0.05 is good.
+            "***" is the best it can be
+
+
+
+RSE -> Squares the errors before dividing to calculate the average error. Punishes the outliers
+
+Multiple R-squared -> The "magnitude" variable explains the 37% of the variability of the "economic loss".                     To can predict the exact value of "economic loss" we would need other variables (63%                      info resting).
+
+                    R squared = 1 - (error of our model / error of only predicting by the mean value)
+                    
+Adjusted R-squared -> Punishes the number of variables used on the model. If we use variables and they do                     not make part on the predict, this value would increase
+
+F-statistic -> It answers to --- "It is better my model than other model without any parameter?" (in this                  case wothout using mag)
+              It measures how better is my model compared to a null one
+
+P - value -> Answers to "Could be my results by chance?" If it is <0.05 is not by chance
+            Confirms that mag is not random. It has relation with losses
+
+
+
+
+
+
+
+
+
+
+We can confirm they are related observing the summary and the plot
+
+
+
+We check the QUALITY of the model checking some data as the P-VALUE and RSE of summary, calculating MAE (average error) and creating a chart that represents a "termomether" of the error
+
+
+```{r}
+# **P-value** -> ***. Is not luck that relation and "estimate" value
+
+predicciones1 <- predict(modelo_perdidas)
+
+# Calculate MAE (Mean Absolute Error)
+mae1 <- mean(abs(tornados_clean$loss_log10 - predicciones1))
+# We show the RSE (Residual Standard Error) calculated in the last "summary"
+summary1 <- summary(modelo_perdidas)
+
+rse_valor1 <- summary1$sigma
+print(paste("Medium Absolute Error -> ", mae1))
+print(paste("Residual Standard Error -> ", rse_valor1))
+
+
+plot(modelo_perdidas, which = 1, col = rgb(0.5, 0, 0.5, 0.1), pch = 16)
+  # which = 1 --> selects the chart of "Residuals vs Fited". It answers with 4 differents charts, not important now
+
+  # pch = 16 --> shape of results. In this case, solid circles
+```
+Regulars - Fitted -> X axis are the predicted values. The Y axis, the errors
+
+
+
+Being the RSE > MAE (usually happens), it shows that not all errors are the same. They are irregular, as normal.
+RSE is bigger than MAE because there are some cases where it takes a considerably bigger error than common ones (in "outliers" cases), and RSE punish this.
+
+In the error THERMOMETER CHART, we can see some outliers examples that make the RSE bigger
+
+
+
+# Analysis of relation ---> "loss_log10" ~ "victims_totals".
+**REGRESSION MODEL** ---> Precits losses ("loss_log10") by only knowing the total victims ("victims_total")
+
+Here, we will start to doubt on the correlation matrix data.
+In this case, the X axis is not categorical as the "magnitude" was, and started to have some "problems"
+So we had some geometric space problems to represent the plot.
+Thats why we used "logs" (explanation)
+Comparation of data plots with and without log scale
+
+```{r}
+sum(tornados_clean %>% 
+  filter(victims_total < 0))
+
+```
+
+
+```{r}
+# RELATION CHART
+
+p1 <- ggplot(tornados_clean, aes(x = victims_total, y = loss)) +
+  geom_point(alpha = 0.4, color = "#2c3e50") +
+  # regression line
+  geom_smooth(method = "lm", color = "#e74c3c", se = TRUE) +
+  
+  labs(
+    title = "Relation between Total Victims and Economic Losses",
+    subtitle = "Regression Line(lm) about losses",
+    x = "Total victims (Injured + Fatalities)",
+    y = "Economic Losses"
+  ) +
+  theme_minimal()
+
+
+# We make a scatter-plot with
+# With loss_log_10 we solve the Y axis problem but not the X
+p2<- ggplot(tornados_clean, aes(x = victims_total, y = loss_log10)) +
+  geom_point(alpha = 0.4, color = "#2c3e50") +
+  
+  # regression line
+  geom_smooth(method = "lm", color = "#e74c3c", se = TRUE) +
+  
+  labs(
+    title = "Relation between Total Victims and Economic Losses",
+    subtitle = "Regression Line(lm) about losses",
+    x = "Total victims (Injured + Fatalities)",
+    y = "Economic Losses (log10)"
+  ) +
+  theme_minimal()
+
+# We make a logarithmic variable to see how data changes in a plot representation
+# With this new logarithmic variable we solve the X axis
+tornados_clean$victims_total_log10 <- log10(tornados_clean$victims_total + 0.001)
+
+p3 <- ggplot(tornados_clean, aes(x = victims_total_log10, y = loss_log10)) +
+  geom_point(alpha = 0.4, color = "#2c3e50") +
+  
+  # regression line
+  geom_smooth(method = "lm", color = "#e74c3c", se = TRUE) +
+  
+  labs(
+    title = "Relación entre Víctimas Totales y Pérdidas Económicas",
+    subtitle = "Línea de regresión lineal (lm) sobre pérdidas en escala logarítmica",
+    x = "Número Total de Víctimas (Heridos + Fallecidos) (Log 10)",
+    y = "Pérdidas Económicas (Log10 USD)"
+  ) +
+  theme_minimal()
+
+
+modelo_victims <- lm(loss_log10 ~ victims_total_log10, data = tornados_clean)
+
+p1
+p2
+p3
+
+# Mostramos el modelo 
+modelo_perdidas_victimas <- lm(loss_log10 ~ victims_total_log10, data = tornados_clean)
+summary(modelo_perdidas_victimas)
+```
+EXPLANATION about how making a log scale can improve a chart:
+  Because of the "outliers", it pushes down all the others "common" cases to the bottom of the chart as we can see in the first case
+  
+  The log effect, makes the outliers go down and the common ones (smaller) rise up (instead of a tornado be 1000 times worse in losses, with log scale will be 3 units worse)
+
+The last one looks like there is negative victims but actually are the cases with 0 victims. It is because when we make the new "victims_total_log10" we are adding 0.001 tom avoid the log(0) and log(0.001)=-3
+
+ABOUT CHARTS:
+
+We notice that the plot and data of the relation of loss_log10 and victims is high, when in the correlation matrix (loss_log10 ~ vitims_total = 0.2) and (loss ~ victims_total = 0.53), was extrange and ¿why so different?.
+We check the "real" correlation using the correlation method "spearman"
+
+```{r}
+# "loss" - "victims_total" real correlation
+cor(tornados_clean$victims_total, tornados_clean$loss, method = "spearman")
+```
+¿Why SPEARMAN and not PEARSON?
+The PEARSON correlation method is good for perfect data without irregularities and no outliers
+The SPEARMAN one, is better for these cases. It doesnt focus on valus but in ranking. This softs the outliers huge values by only asigning them an order value.
+It checks if the order of one of the variables is the same (or aprox) of the other variable order.
+When closer, better
+
+```{r}
+# WHY SPEARMAN
+
+# --- Chart 9: Correlation Matrix of Numerical Variables ---
+
+# Necessary for the correlation matrix
+library(reshape2) 
+
+numeric_vars <- tornados_clean %>%
+  dplyr::select(    # we select the variables we want in the correlation matrix
+    mag, len, wid, inj, fat, 
+    loss, victims_total, area_sq_mi, 
+    loss_log10
+  ) %>%
+  drop_na() 
+
+# Calculated matrix with correlation values
+cor_matrix <- cor(numeric_vars, method = "spearman")
+
+# Mandatory step to can plot the correlation matrix(it transform the previus table values into 3 varibales (VAR1, VAR2, VALUES)). Easier to use then with ggplot...
+melted_cor <- melt(cor_matrix)
+
+# Create the chart
+p9 <- ggplot(data = melted_cor, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile(color = "white") +   # adds a white line between values
+  geom_text(aes(label = round(value, 2)), color = "black", size = 3) +   # round to 2 decimals
+  scale_fill_gradient2(
+    low = "#0571b0", high = "#ca0020", mid = "white", 
+    midpoint = 0, limit = c(-1, 1), space = "Lab", 
+    name = "Pearson\nCorrelation"
+  ) +
+  labs(
+    title = "Correlation Matrix of Tornado Metrics",
+    subtitle = "Relationship between physical characteristics and impacts",
+    x = "", y = "",
+    caption = "Source: NOAA | Analysis by Group 15"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), # rotate texts on X axis to not overlap
+    plot.title = element_text(face = "bold", size = 16),
+    panel.grid.major = element_blank()
+  )
+
+print(p9)
+
+# Save it in the Outputs folder
+ggsave(
+  filename = here("Outputs", "SPEARMAN_tornado_correlation_matrix.png"),
+  plot = p9,
+  width = 8,
+  height = 8,
+  units = "in",
+  dpi = 1000  
+)
+
+```
+
+## Analyzing some strong and interesting relations of the correlation matrix:
+# magnitude - loss (0.62)
+# magnitude - area_sq_mi (0.49)
+# magnitude - victims_total (0.41)
+# loss - area_sq_mi(0.5)
+# area_sq_mi - len and wide (0.85, 0.93)
+# magnitude - boolean_fatalities
+
+#1. RELATION CHART
+#2. MODEL, MODEL DATA, MODEL CHART
+#3. QUIALITY MODEL CHECK
+
+```{r}
+# Now we can see they have considerable and stable values (in the before one "loss" and "loss_log10" were not the same), we confirm our relation thoughts.
+```
+
+# 1- Analysis of relation ---> magnitude - loss -> done before
+
+# 2- Analysis of relation ---> magnitude - area_sq_mi
+**REGRESSION MODEL** ---> Precits losses ("area_sq_mi") by only knowing the magnitude ("mag")
+
+```{r}
+
+#1.RELATION CHART
+# We create a logarithmic value about the destroyed area to avoid the geometric problem of representing in into a chart
+tornados_clean$area_sq_mi_log10 <- log10(tornados_clean$area_sq_mi + 0.001)
+
+# We show in the chart the ones that have had > 0 victims with "subset"
+ggplot(subset(tornados_clean, area_sq_mi > 0), aes(x = as.factor(mag), y = area_sq_mi_log10, fill = as.factor(mag))) +
+  geom_violin(alpha = 0.4, color = "gray40") +  
+  geom_boxplot(width = 0.2, color = "black", alpha = 0.7, outlier.shape = NA) + 
+  scale_fill_brewer(palette = "Purples") + 
+  theme_minimal() + 
+  labs(
+    title = "Destruction Area by Tornado Magnitude",
+    subtitle = "Distribution of affected area (Square Miles in Log10 Scale)",
+    x = "Tornado Magnitude (mag)",
+    y = "Destroyed Area (Square Miles -> Log10 Scale)",
     fill = "Magnitude"
   ) +
-  theme_minimal()
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "none"
+  )
 ```
+Following this plot, we can see some obvious relation (a clear coefficent of, more mag, more destroyed area)
 
 ```{r}
-# We can see there is some relation as the bars starts ascending, although the mag 4 is the biggest when we could think before knowing the chart, that it would be the 5th.
+#2. MODEL, MODEL DATA, MODEL CHART
 
-# This could be because, by chance one tornado of magnitude "4" was so deadly and distrubes the chart. Lets see if it happens
+tornados_area_destroyed = tornados_clean%>%filter(area_sq_mi>0) 
+  # Eliminated 500 (aprox) tornados of 0 area destroyed.
+
+# MODEL
+modelo_destroyed_area <- lm(area_sq_mi_log10 ~ mag, data = tornados_clean)
+
+# MODEL DATA
+summary(modelo_destroyed_area)
 
 
-worse_tornados <- tornados_clean %>%
-  group_by(mag) %>%
-  summarise(max_victimas = max(victims_total, na.rm = TRUE)) %>%
-  filter(!is.na(mag))
-
-worse_tornados
-
-
-# We show it in a chart
-ggplot(worse_tornados, aes(x = factor(mag), y = max_victimas)) +
-  # The line that goes from floor to the point
-  geom_segment(aes(x = factor(mag), xend = factor(mag), y = 0, yend = max_victimas), 
-               color = "grey") +
-  # The point
-  geom_point(aes(color = factor(mag)), size = 5) +
-  # Exact number for no space to doubts
-  geom_text(aes(label = max_victimas), vjust = -1.5, size = 4) +
-  # Expand the Y axis to not cut
-  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+# MODEL CHART
+ggplot(tornados_clean, aes(x = mag, y = area_sq_mi_log10)) +
+  geom_jitter(alpha = 0.1, color = "purple4", width = 0.2) + 
+  geom_smooth(method = "lm", color = "darkred", se = TRUE, linewidth = 1.2) +
+  theme_minimal() +
   labs(
-    title = "Record casualties in a single tornado by magnitude",
-  subtitle = "The 'worst-case scenario' recorded for each category",
-  x = "Magnitude",
-  y = "Maximum casualties in a single event",
-  color = "Magnitude"
+    title = "Linear Regression Model: Magnitude vs. Destroyed Area",
+    subtitle = "Estimated trend line using Ordinary Least Squares",
+    x = "Tornado Magnitude (mag)",
+    y = "Destroyed Area (Log10 Square Miles + 0.001)"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14)
+  )
+
+```
+We check the QUALITY of the relation with not only the chart, but also with data
+
+```{r}
+#3. QUALITY MODEL CHECK
+predicciones2 <- predict(modelo_destroyed_area)
+
+# Calculate MAE ("Mean Absolute Error")
+mae2 <- mean(abs(tornados_area_destroyed$area_sq_mi_log10 - predicciones2))
+
+# Show the RSE of the summary done before
+summary2 <- summary(modelo_destroyed_area)
+rse_valor2 <- summary2$sigma
+
+summary2
+print(paste("Mean Absolute Error -> ", mae2))
+print(paste("Residual Standard Error -> ", rse_valor2))
+
+# Residuals chart
+plot(modelo_destroyed_area, which = 1, col = rgb(0.5, 0, 0.5, 0.1), pch = 16)
+
+```
+
+In this case it also shows they are related by plot and summary data.
+Is true that here the MAE and RSE iss bigger, but we have to take note that it is only one independent variable. It "contains" the 29% info. we need to get the perfect prediction.
+It is related. If we had more variables on the indepentendt side, we would tight the error.
+
+The values that confirms this relation about more mag ---> more area_destroyed is not by chance are there, like p-value or t-value.
+
+Also, we did a case where we only had tornados with >0 area destroyed, but actually, these cases are "normal" tornado cases (there are 500 of 68693) that we should not exclude in a linear regression.
+We could do a logisitc regression to predict if they are going to be <0 or >0 but is only a few cases of the total so we wont do it (we could have adapted it to setting a threshold, and if >threshold is high destroyed area and <threshold low, but we will do that with tornado magnitude)
+
+
+# Now we will do a deeper analysis in the "victims_total" variable with the others:
+
+# 3- Analysis of relation ---> victims_total ~ magnitude 
+**REGRESSION MODEL** ---> Predicts total victims("total_victims_log10") by only knowing the magnitude ("mag")
+
+# 4- Analysis of relation ---> victims_total (0.28) ~ area_sq_mi 
+**REGRESSION MODEL** ---> Predicts total victims ("total_victims_log10") by only knowing the area destroyed ("area_sq_mi_log10")
+
+# 4- Analysis of relation ---> victims_total (0.28) ~ loss_log10
+**REGRESSION MODEL** ---> Predicts total victims ("total_victims_log10") by only knowing the losses ("loss_log10")
+
+#### We filter the dataset to ONLY take the tornados WITH VICTIMS (are not that common in the dataset)
+```{r}
+# The variable of "victims_totals" is more delicate. There are many cases with 0 victims or 0 fatalities
+victims_data <- tornados_clean %>%
+  mutate(categoria = case_when(
+    is_deadly ~ "Deadly",
+    victims_total > 0 ~ "Injured and deadly",
+    TRUE ~ "No victims"
+  )) %>%
+  count(categoria)
+
+victims_data
+
+ggplot(victims_data, aes(x = categoria, y = n, fill = n)) +
+  geom_col(width = 0.7) +
+  geom_text(
+    aes(label = n),  # Shows n value
+    vjust = -0.5,    # Adjust text to can be seen clearly
+    size = 3.5,      # Text size
+    color = "black"  # Text color
+  ) +
+  scale_fill_gradient(
+    low = "lightblue",   # Low values color
+    high = "darkblue"    # High values color
+  ) +
+  labs(
+    title = "Tornados by category of victim type",
+    x = "",
+    y = "Tornados count"
   ) +
   theme_minimal()
 ```
+As we can see ONLY 7964 of 68693 tornados have some victims.
+
+Now, we will make 3 models with each vairbale individually of these tornado victim cases, and then make a SECOND model using these 3 independent variables to see the difference.
+
+We will do it separately to observe the difference
 ```{r}
-# Now that we have manually selected 2 variables to see if they have some relation, we are going to search for those that have strong relation
-library(corrr) # Paquete excelente para esto
-library(ggcorrplot)
-# We select the numeric cols that we are interested in
-tornados_corr <- tornados_clean %>%
-  select(mag, len, wid, loss, inj, fat, victims_total, yr, mo) %>%
-  drop_na() # The correlation stops working if there are NA`s
+# We eliminate those tornados without area destroyed
+victims_only <- tornados_clean %>% filter(victims_total >=1)
+# >= 1 victims
+count(victims_only)
 
-# 2. Calculate the correlation matrix
-corr_matrix <- cor(tornados_corr)
+# We make the charts of the relation X and Y axis of the analysed variables
 
-# This matrix, shows the relation between all the possible variables of the dataset (in this case we selected some of them, not all)
-# It has values between -1 and 1.
-# If its 1 ---> Means that both variables change the same if the other does
-# If its -1 ---> Means that if one rises the other goes down
-# If its 0 ---> Dont have any type of relation
+p1 <- ggplot(victims_only, aes(x = factor(mag), y = victims_total_log10, fill = factor(mag))) +
+  geom_violin(alpha = 0.5, trim = FALSE, color = "grey") +
+  geom_boxplot(width = 0.2, color = "black", alpha = 0.7, outlier.alpha = 0.1) +
+  scale_fill_brewer(palette = "Purples") +
+  labs(title = "Victims by tornado magnitude (mag)", x = "magnitude", y = "Total Victims(log10)") +
+  theme(legend.position = "none")
 
-# 3. Draw the heat map
-ggcorrplot(corr_matrix, 
-           hc.order = TRUE, 
-           type = "lower",
-           lab = TRUE, 
-           colors = c("#6D9EC1", "white", "#E46726"),
-           title = "Correlation Matrix: Tornado Variables",
-           ggtheme = theme_minimal())
 
-# We can see some relations following the color scale.
-```
 
-## PREPARATION OF DATA
 
-```{r}
-library(tidyverse)
-library(scales) # Required for better axis labels
+# Showed in the next cell code all together
+p2 <- ggplot(victims_only, aes(x = area_sq_mi_log10, y = victims_total_log10)) +
+  geom_point(alpha = 0.3, color = "orange2") +
+  geom_smooth(method = "lm", color = "darkred") +
+  labs(title = "Victims b destroyed area (area_sq_mi_log10)", x = "Destroyed area (log10)", y = "Total Victims(log10)")
 
-# --- 1. DATA PREPARATION ---
-# We create a specific subset for modeling to avoid issues with missing values (NAs)
-# and focused on physical predictors (mag, len, wid) vs impact (loss)
-data_model <- tornados_clean %>%
-  select(loss, mag, len, wid) %>%
-  drop_na()
-
-# --- 2. LOGARITHMIC MODEL ---
-# Why log? Because tornado damage is exponential. 
-# A magnitude 5 is thousands of times more destructive than a magnitude 1.
-# log(loss + 1) flattens these extremes so the linear model can "see" the trend.
-model_log <- lm(log(loss + 1) ~ mag + len + wid, data = data_model)
-
-# Print the statistical summary
-summary(model_log)
-# In this case, the error will be higher because we did not ignored the 0 loss tornados and disturbed the model
-```
-
-```{r}
-# --- 3. FILTERED MODEL (Impact analysis) ---
-# We filter out zero-loss cases to see how variables behave when damage actually occurs.
-data_damage_only <- data_model %>% filter(loss > 0)
-model_damage <- lm(log(loss) ~ mag + len, data = data_damage_only)
-
-summary(model_damage)
-```
-
-```{r}
-# --- 4. VISUALIZATION ---
-# Using scale_y_log10 is crucial. Without it, the F5 tornadoes would 
-# "crush" all other data points at the bottom of the graph.
-ggplot(data_damage_only, aes(x = mag, y = loss)) +
-  geom_jitter(color = "steelblue", alpha = 0.3, width = 0.2) + # Jitter reveals data density
-  geom_smooth(method = "lm", color = "firebrick", se = TRUE) + # The red line is our prediction
-  scale_y_log10(labels = scales::dollar_format()) + # Log scale for the Y axis
+p3 <- ggplot(victims_only, aes(x = loss_log10, y = victims_total_log10)) +
+  geom_jitter(alpha = 0.3, color = "black", width = 0.2) + 
+  geom_smooth(method = "lm", color = "darkred", se = TRUE, linewidth = 1.2) + # Nota: 'size' se actualizó a 'linewidth' en versiones nuevas de ggplot
+  theme_minimal() +
   labs(
-    title = "Predictive Model: Tornado Magnitude vs. Economic Loss",
-    subtitle = "Trend line calculated using Linear Regression (Log scale)",
-    x = "Tornado Magnitude (F/EF Scale)",
-    y = "Economic Loss (Logarithmic Scale)",
-    caption = "Data: 1950-2022 | Filtered: losses > 0"
+    title = "Linear Regression Model: Losses vs. Victims Total",
+    subtitle = "Estimated trend line using Ordinary Least Squares",
+    x = "Losses (log10)",
+    y = "Victims Total (Log10 + 0.001)"
   ) +
-  theme_minimal()
+  theme(
+    plot.title = element_text(face = "bold", size = 14)
+  )
+
+p1
+
 ```
 
-## WHICH FACTORS SEEM TO MATTER MOST FOR A SELECTED OUTCOME?
-In the previous summary of data, we have a clear example o fwhich atribute is more important in an outcome (in this case inn "losses")
-
-Coefficients:
-            Estimate Std. Error t value Pr(>|t|)    
-(Intercept) 9.134522   0.016992   537.6   <2e-16 ***
-mag         1.358654   0.013264   102.4   <2e-16 ***
-len         0.041670   0.001255    33.2   <2e-16 ***
-
-The "t value" represents the "importance" of that atribute on the outcome.
-In this case, mag is the most important (following the results of the damage model (the second one))
-
-## CAN ONE VARIABLE BE PREDICTED BASED ON OTHERS? (LinReg)
 
 ```{r}
-# We will make a LINEAR REGRESSION on predict the amount of LOSS
-library(tidymodels)
-library(tidyverse)
+# 2. MODEL, MODEL DATA, MODEL CHART
 
-tornados_modeling <- tornados_clean %>%
-  dplyr::select(loss_log10, mag, len, wid, season, area_sq_mi) %>%
-  drop_na()
+# MODELS
+modelo_magnitude_victim <- lm(victims_total_log10 ~ mag, data = victims_only)
+modelo_area_sq_mi_log10_victim <- lm(victims_total_log10 ~ area_sq_mi_log10, data = victims_only)
+modelo_losses_victim <- lm(victims_total_log10 ~ loss_log10, data = victims_only)
 
-# ==========================================
-# DATA SPLITTING
-# ==========================================
-tornado_split <- initial_split(tornados_modeling, prop = 0.8)
-tornado_train <- training(tornado_split)
-tornado_test  <- testing(tornado_split)
+# MODEL DATA
+summary3 <- summary(modelo_magnitude_victim)
+summary4 <- summary(modelo_area_sq_mi_log10_victim)
+summary5 <- summary(modelo_losses_victim)
 
-# ==========================================
-# RECIPE SPECIFICATION
-# ==========================================
-# Like in the notebooks, define the formula and normalize
-lm_recipe <- recipe(loss_log10 ~ mag + len + wid + season + area_sq_mi, data = tornado_train) %>%
-  step_normalize(all_predictors())
 
-# ==========================================
-# MODEL SPECIFICATION
-# ==========================================
-lm_spec <- linear_reg() %>%
-  set_engine("lm")
-
-# ==========================================
-# WORKFLOW CREATION
-# ==========================================
-lm_wflow <- workflow() %>%
-  add_recipe(lm_recipe) %>%
-  add_model(lm_spec)
-
-# ==========================================
-# MODEL FITTING
-# ==========================================
-lm_fit <- fit(lm_wflow, data = tornado_train)
-
-# ==========================================
-# EVALUATION
-# ==========================================
-# We make predicitins in the test data as in the exercises
-lm_predictions <- predict(lm_fit, new_data = tornado_test) %>%
-  bind_cols(tornado_test)
-
-# Calculate the regresion data (RMSE y R-squared)
-metrics_lm <- metrics(lm_predictions, truth = loss_log10, estimate = .pred)
-print(metrics_lm)
-```
-
-Explication of this data:
-"rmse" and "mae" are error metrics
-"rmse" first error^2, then square and then average
-"mae" its simiple. Sums all the error commited and makes an average
-"rsq" its 28%, and means that our atriburtes explain the 28% of variability of the results
-
-```{r}
-library(ggplot2)
-
-# Chart of the predictions of the test
-ggplot(lm_predictions, aes(x = loss_log10, y = .pred)) +
-  geom_point(alpha = 0.2, color = "darkblue") +
-  # Add the ideal referencial line (Precition = Reality)
-  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed", size = 1) +
+# MODEL CHART
+# MAGNITUDE-VICTIM
+# Without the "factor(mag)", to a linear regression
+p4 <- ggplot(victims_only, aes(x = mag, y = victims_total_log10)) +
+  geom_jitter(alpha = 0.3, color = "purple4", width = 0.2) + 
+  geom_smooth(method = "lm", color = "darkred", se = TRUE, linewidth = 1.2) + # Nota: 'size' se actualizó a 'linewidth' en versiones nuevas de ggplot
+  theme_minimal() +
   labs(
-   title = "Linear Model Evaluation: Predictions vs Reality",
-    subtitle = "The red dashed line represents the perfect prediction",
-    x = "Actual Value (loss_log10)",
-    y = "Model Prediction (.pred)"
+    title = "Linear Regression Model: Magnitude vs. Victims Total",
+    x = "Tornado Magnitude (mag)",
+    y = "Victims Total (Log10 + 0.001)"
   ) +
-  theme_minimal()
-```
+  theme(
+    plot.title = element_text(face = "bold", size = 14)
+  )
 
-When more blue points (reality cases of test) are closer to the red line (prediction), better is the model
+
+
+
+
+print("Summary of model VICTIMS-MAGNITUDE ")
+summary3
+print("Summary of model VICTIMS-AREA_SQ_MI_LOG10 ")
+summary4
+print("Summary of model VICTIMS-LOSSES_LOG_10 ")
+summary5
+
+p4
+p2
+p3
+
+# All the pontis of Axis Y == 0 is because they have only 1 victim (log(1)=0)
+count(victims_only%>%filter(victims_total==1))
+
+```
+EXPLICATION:
+All of them 3 have values that make us think they are related and are significatively important.
+
+
 
 ```{r}
-lm_fit %>% 
-  extract_fit_parsnip() %>% 
-  tidy()
+plot(modelo_magnitude_victim, which = 1, col = rgb(0.5, 0, 0.5, 0.1), pch = 16)
+plot(modelo_area_sq_mi_log10_victim, which = 1, col = rgb(0.5, 0, 0.5, 0.1), pch = 16)
+plot(modelo_losses_victim, which = 1, col = rgb(0.5, 0, 0.5, 0.1), pch = 16)
+
 ```
+EXPLICATION ERROR THERMOMETER:
+These last 3 charts shows us if the model is "optimist" or not, by showing us how it fails. If it predict is higer or lower value than the real one
 
-`estimate`**: The weight (coefficient). It indicates how much the model's prediction changes for each one-unit increase in that specific variable.
 
-`std.error`**: The standard error of the estimate. It measures the margin of error for that weight; the smaller it is, the more precise the model's calculation.
 
-`statistic`**: The t-statistic (or t-value), which serves as our "importance ranking." It is calculated by dividing the `estimate` by the `std.error`.
+# 5- Analysis of relation ---> victims_total - magnitude + area_sq_mi + log_loss10
+**MULTI-REGRESSION MODEL** ---> Precits total victims("total_victims_log10") by only knowing the magnitude ("mag")
 
-`p.value`**: The statistical significance threshold. If this value is below 0.05 (in your output it displays as 0, meaning it is infinitely small), the variable is 100% statistically significant and the relationship is not due to random chance.
+We have data to analyze the model individually to can compare next when we make a multi-variable model
+```{r}
+# MODEL
+modelo_multivariable <- lm(victims_total_log10 ~ mag + area_sq_mi_log10 + loss_log10, data = victims_only)
+summary6<-summary(modelo_multivariable)
+summary6
+
+print("Error summary3, VICTIMS-MAGNITUDE")
+summary3$sigma
+
+print("Error summary4 VICTIMS-AREA_SQ_MI_LOG10")
+summary4$sigma
+
+print("Error summary5 VICTIMS-LOSSES_LOG_10")
+summary5$sigma
+
+print("Error multivariable")
+summary6$sigma
+
+# MODEL CHART
+victims_only$predicted <- predict(modelo_multivariable)
+
+ggplot(victims_only, aes(x = predicted, y = victims_total_log10)) +
+  geom_point(alpha = 0.2, color = "purple4") +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed", linewidth = 1) +
+  theme_minimal() +
+  labs(title = "Valores observados vs. predichos",
+       subtitle = "Modelo: victims_total_log10 ~ mag + area_sq_mi_log10 + loss_log10",
+       x = "Valor predicho por el modelo",
+       y = "Valor real (victims_total_log10)")
+
+
+plot(modelo_multivariable, which = 1, col = rgb(0.5, 0, 0.5, 0.1), pch = 16)
+
+
+coefs <- tidy(modelo_multivariable, conf.int = TRUE) %>%
+  filter(term != "(Intercept)")
+
+ggplot(coefs, aes(x = term, y = estimate)) +
+  geom_point(size = 3, color = "darkred") +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  theme_minimal() +
+  labs(title = "Coeficients of the multivariable model",
+       x = "", y = "Estimmation (confidence interval of 95%)")
+
+```
+EXPLICATION:
+
+What we can see is that the multivariable model is better than the 3 by their own.
+
+MULTIPLE R SQUARED -> It explains the 38% of the variability of "citims_total_log10" when the others explains only the 29%(mag) 17%(area_sq_mi) 27%(loss_log10)
+
+"The reason the final R² is 38% instead of the sum of 29% + 17% + 27% is due to multicollinearity. This means that our three predictor variables are not fully independent from each other — they are physically related phenomena. A tornado with higher magnitude tends to also destroy a larger area, and a larger destroyed area tends to produce higher economic losses. Because of this, when we combine the three variables in one model, they partially explain the same portion of the variance in victims, so their contributions overlap rather than stack up. Each variable only gets credit for what it explains exclusively, beyond what the other two already captured."
+
+
+
+ADJUSTED R-SQUARED -> If any of the added variables to the model wont be useful or important, it woul have punish it and decrease, but all are significative and improve the model
+
+RSE -> Has the lowest RSE of all the models
+
+        [1] "Error summary3, VICTIMS-MAGNITUDE"
+        [1] 0.4703687   --->   10^0.4704  # Error del modelo mag → ~2.95 víctimas
+        [1] "Error summary4 VICTIMS-AREA_SQ_MI_LOG10"
+        [1] 0.5110098   --->   10^0.5110  # Error del modelo area → ~3.24 víctimas
+        [1] "Error summary5 VICTIMS-LOSSES_LOG_10"
+        [1] 0.4774674   --->   10^0.4775  # Error del modelo loss → ~3.00 víctimas
+
+        
+        [1] "Error multivariable"
+        [1] 0.4411276   --->   10^0.4411  # Error multivariable → ~2.76 víctimas
+
+
+The coefficent values (last chart explanation and summary)
+
+Overall, the multivariable model achieves a better balance between explanatory power and prediction error. It explains 9 percentage points more variance than the best individual model (mag at 29%) while reducing the average prediction error from ~2.95 victims to ~2.76 victims in real scale. However, the moderate R² of 38% suggests that other factors not present in the dataset, would be needed to further improve predictions.
+
+
+
+
+Now with "anova" we ask ourselves:
+"Is the multivariable model significantly better than the simple model, or could the improvement be due to pure chance?"
+```{r}
+# Other fast way to compare models
+anova(modelo_magnitude_victim, modelo_multivariable)
+anova(modelo_area_sq_mi_log10_victim, modelo_multivariable)
+anova(modelo_losses_victim, modelo_multivariable)
+```
+EXPLICATION of results:
+
+RSS (Residual Sum of Squares) → Total sum of all squared errors. The lower, the better the model fits the data.
+
+Sum of Sq → The difference in RSS between the two models. How much error was reduced by adding the extra variables.
+
+F → Same as the F-statistic seen before, measures whether that error reduction is relevant or trivial.
+    F = (Sum of Sq / Df) / (RSS_complejo / Res.Df)
+          Sum of Sq → Error reduction when adding variables
+          Df → Number of added variables
+          RSS_complex → Residual error of the more complex model
+          Res.Df → Degrees of freedom of the complex model
+
+              F < 4 → little improve, probably not significative
+              F > 4 → starts to be significative (with big datasets)
+              F > 10 → clearly significative
+              F > 100 → big improvement
+              F > 1000 → huge improvement
+
+Pr(>F) → The p-value. If it is lower than 0.05 the improvement is statistically significant.
 
 ```{r}
-library(vip)
+# We compare 3 individuals models as before with the multi-variable one
+library(broom)
+library(dplyr)
 
-# Extract the inner model and shows the importance of the used atributes to predict the outcome of losses
-lm_fit %>%
-  extract_fit_parsnip() %>%
-  vip(geom = "col", aesthetics = list(fill = "darkorange")) +
-  labs(title = "Importancia de las Variables en el Daño Económico") +
-  theme_minimal()
+comparacion <- bind_rows(
+  glance(modelo_magnitude_victim)  %>% mutate(modelo = "Magnitude"),
+  glance(modelo_area_sq_mi_log10_victim) %>% mutate(modelo = "Area_sq_mi_log10"),
+  glance(modelo_losses_victim)     %>% mutate(modelo = "loss_log10"),
+  glance(modelo_multivariable)     %>% mutate(modelo = "Multivariable")
+) %>%
+  select(modelo, r.squared, adj.r.squared, AIC, BIC)
+
+comparacion
+
+ggplot(comparacion, aes(x = modelo, y = adj.r.squared, fill = modelo)) +
+  geom_col() +
+  geom_text(aes(label = round(adj.r.squared, 3)), vjust = -0.5) +
+  theme_minimal() +
+  labs(title = "Comparation of 'adjusted square-R ajustado' between models",
+       x = "", y = "R-cuadrado ajustado") +
+  theme(legend.position = "none")
 ```
+EXPLANATION:
 
-## CAN ONE VARIABLE BE PREDICTED BASED ON OTHERS? (LogReg)
+Finally we can check the AIC and BIC (these ones are when LOWER -> BETTER).
+These data exist to compare models fairly: rewards good fit while penalizing unnecessary complexity.
+
+AIC (Akaike Information Criterion) → Penalizes each added variable in a moderate way. It favors models that balance good fit with simplicity.
+
+BIC (Bayesian Information Criterion) → Penalizes more strongly than AIC, especially when you have a large amount of data. It is more strict when it comes to accepting new variables.
+
+
+AIC = (how poorly the model fits) + 2 × (number of variables)
+BIC = (how poorly the model fits) + ln(n) × (number of variables)
+Where n is the number of observations (rows in your dataset).
+
+Since we have thousands of tornadoes, ln(n) is much larger than 2, which is why BIC penalizes more strongly than AIC in your case. The more data you have, the stricter BIC becomes when accepting new variables.
+
+
+
+The multivariable model has the lowest AIC and BIC of all, confirming that adding the three variables together is worth it even after penalizing for added complexity.
 
 ```{r}
-# We will make a LOGISTIC REGRESSION on predict if the tornado will cause any VICTIM
-# ==========================================
-# SETTING UP DATA FOR CLASSIFICATION
-# ==========================================
-tornados_class <- tornados_balanced %>%
-  mutate(is_deadly = as.factor(is_deadly)) %>% 
-  dplyr::select(is_deadly, mag, len, wid, season, area_sq_mi) %>%
-  drop_na()
+library(rsample)
+# Now we are going to do a logistic regression.
+# Having the data we have
+tornados_clean <- tornados_clean %>%
+  mutate(mag_alta = ifelse(mag >= 3, 1, 0))
 
-# ==========================================
-# DATA SPLITTING
-# ==========================================
+# Dataset de entrenamiento y de test
+set.seed(123) 
+split_objeto   <- initial_split(tornados_clean, prop = 0.75, strata = mag_alta)
+tornados_train <- training(split_objeto)
+tornados_test  <- testing(split_objeto)
+
+
+
+modelo_logistico <- glm(mag_alta ~ area_sq_mi_log10 + loss_log10 + victims_total_log10,
+                         data = tornados_train, family = binomial)
+summary(modelo_logistico)
+```
+EXPLANATION:
+
+These results are so similar to the summaries of the linera regression models. But this is a "LOGISTC REGRESSION" and we interpret them in a different way.
+
+In this case we dont treat the coefficents as Y rising continious values, we treat them as probabilities (between 0 and 1).
+For that we work with odds instead of probabilities:
+      odds = probability / (1 - probability)
+      
+      Example: if the probability of a tornado being high magnitude is 0.8 (80%):
+      odds = 0.8 / (1 - 0.8) = 0.8 / 0.2 = 4
+      This means "4 times more likely to happen than not to happen."
+      
+To pass these odds to probabilities:
+      exp(0.94907)  # area_sq_mi_log10
+      exp(0.80720)  # loss_log10
+      exp(0.43720)  # victims_total_log10
+      
+For example exp(0.949) ≈ 2.58, meaning that for every unit increase in area_sq_mi_log10, the probabilities of it being high magnitude are multiplied by 2.58.
+
+
+Null deviance (19272) -> the error of the simplest possible model, with no predictor variables, only the intercept
+
+
+Residual deviance (10956) -> the error of your model with the 3 variables
+
+
+
+```{r}
+# Instala el paquete si no lo tienes: install.packages("sjPlot")
+library(sjPlot)
+
+# Este comando dibuja los Odds Ratios de forma automática
+plot_model(modelo_logistico, vline.color = "red", sort.est = TRUE)
+```
+Visual representation about the lasts results.
+
+
+
+
+
+```{r}
+# 2. Calculate the individual predictions
+
+# ggopredict -> 
+# For each variable, it fixes the other two at their mean value and varies only that variable to see how the predicted probability of mag_alta changes. It's like saying "holding everything else constant, what happens if I only change the area?"
+
+
+pred_area    <- ggpredict(modelo_logistico, terms = "area_sq_mi_log10")
+pred_loss    <- ggpredict(modelo_logistico, terms = "loss_log10")
+pred_victims <- ggpredict(modelo_logistico, terms = "victims_total_log10")
+
+# 3. Create the chart for area_sq_mi_log10
+g1 <- ggplot(pred_area, aes(x = x, y = predicted)) +
+  geom_line(color = "#1f77b4", size = 1.2) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), fill = "#1f77b4", alpha = 0.15) +
+  labs(title = "Efecto del Área", x = "Área (log10 sq mi)", y = "Probabilidad Mag Alta") +
+  theme_minimal(base_size = 12) +
+  ylim(0, 1) # Importante: fija el eje Y de 0 a 1 para ver la probabilidad real
+
+# 4. Creamos el gráfico para las PÉRDIDAS (Loss)
+g2 <- ggplot(pred_loss, aes(x = x, y = predicted)) +
+  geom_line(color = "#e377c2", size = 1.2) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), fill = "#e377c2", alpha = 0.15) +
+  labs(title = "Efecto de las Pérdidas", x = "Pérdidas (log10 $)", y = "") +
+  theme_minimal(base_size = 12) +
+  ylim(0, 1)
+
+# 5. Creamos el gráfico para las VÍCTIMAS
+g3 <- ggplot(pred_victims, aes(x = x, y = predicted)) +
+  geom_line(color = "#2ca02c", size = 1.2) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), fill = "#2ca02c", alpha = 0.15) +
+  labs(title = "Efecto de las Víctimas", x = "Total Víctimas (log10)", y = "Probabilidad Mag Alta") +
+  theme_minimal(base_size = 12) +
+  ylim(0, 1)
+
+# 6. Los juntamos de forma espectacular gracias a patchwork
+(g1 + g2) / g3 + plot_annotation(title = "Marginal effects of the Logisitic Mode",
+                                 subtitle = "Predicted probability of a high mag tornado (>= 3)")
+```
+EXPLANATION:
+We can confirm what we saw before.
+The "area_sq_mi_log10" and "loss_log10" are the most important variables for the predicition of a tornado magnitude. As we can see, they both have a great change on the "probability" of being "high mag" when their values reach certain point.
+The "victims_total_log10" is softer and does not change as the other two
+
+
+
+
+
+```{r}
+
+# Guardamos las predicciones en el dataframe de TEST para no mezclar datos
+tornados_test$pred_prob <- predict(modelo_logistico, newdata = tornados_test, type = "response") # response is to the model return probabilities between 0 and 1 and not the raw logit
+tornados_test$pred_clase <- ifelse(tornados_test$pred_prob > 0.5, 1, 0)
+
+# 3. Graficar la matriz de confusión
+eval <- evaluate(
+  data = tornados_test, 
+  target_col = "mag_alta", 
+  prediction_cols = "pred_clase", # En plural
+  type = "binomial"                # ¡Este es el que faltaba!
+)
+
+plot_confusion_matrix(eval)
+```
+
+```{r}
+# Now we will analyze the ROC curve. This curve represents what happens to the model when we change the "threshold".
+# Y axis --> Recall
+# X axis --> Fake Positives
+
+# It has different methods to calculate it.
+# In this case where we want to priorize the Recall (we dont want FAKE NEGATIVES) we use "YOUDEN" that is "Recall + Specifity" (we maximize the TRUE POSITIVES and minimize the FAKE NEGATIVES)
+
+# Moving the threshold always will improve one thing and worse other.
+
+library(caret)
+
+reporte_automatico <- confusionMatrix(
+  data = as.factor(tornados_test$pred_clase),       # ¡Cambiado a _test!
+  reference = as.factor(tornados_test$mag_alta),    # ¡Cambiado a _test!
+  positive = "1"
+)
+
+# 3. Extraemos e imprimimos solo las métricas clave que necesitas para tu reporte:
+print("--- MÉTRICAS AUTOMÁTICAS DEL MODELO LOGÍSTICO ---")
+print(paste("(Accuracy):", round(reporte_automatico$overall["Accuracy"] * 100, 2), "%"))
+print(paste("Precision):", round(reporte_automatico$byClass["Precision"] * 100, 2), "%"))
+print(paste("(Recall / Sensitivity):", round(reporte_automatico$byClass["Sensitivity"] * 100, 2), "%"))
+print(paste("F1-Score (Balance):", round(reporte_automatico$byClass["F1"], 4)))
+
+```
+EXPLANATION:
+
+Accuracy (96.15%) -> "Of all predictions made, how many were correct overall?"
+                    Not always a high accuracy is a good model, as this case
+                    
+Precision (70.62%) -> "Of everything I predicted as positive, how many actually were positive?"
+                    It measures the quality of the "alarms"
+                    
+Recall (33.33%) -> "Of all the actual positives, how many did I correctly detect?"
+                    In this case we have a "LAZY" model (we will explain this)
+                    
+F1-Score (0.4529) -> "The harmonic balance between Precision and Recall."
+
+```{r}
+library(pROC)
+
+# 1. Calculate the ROC curve
+roc_objeto <- roc(
+  response  = tornados_test$mag_alta,
+  predictor = tornados_test$pred_prob
+)
+
+# 2. Observe the AUC (Area Under the Curve)
+print(paste("AUC:", round(auc(roc_objeto), 4)))
+
+# 3. Encontrar el threshold óptimo (método de Youden)
+threshold_optimo <- coords(roc_objeto, "best", best.method = "youden")
+print(threshold_optimo)
+
+# 4. Graficar la curva ROC
+plot(roc_objeto, 
+     col  = "blue", 
+     main = "ROC Curve - Logistic Model Tornados",
+     print.auc = TRUE)
+
+# 5. Marcar el punto óptimo en la curva
+points(threshold_optimo$specificity, 
+       threshold_optimo$sensitivity, 
+       col = "red", pch = 19, cex = 1.5)
+
+```
+EXPLANATION:
+
+Recall (Y axis) → of the actual positives, how many does it detect
+Specificity (X axis) → of the actual negatives, how many does it detect
+
+ROC Curve -> The ROC curve goes through all possible thresholds (from 0 to 1), and for each one it calculates:
+
+
+
+Each threshold generates one blue point, and all those points together form the curve.
+
+The red point is the zone where you're getting the maximum possible Recall in exchange for the smallest sacrifice in Specificity
+
+AUC (Area Under the Curve) -> 
+                        Measures how well a model can distinguish between the two classes, across all                             possible thresholds. It represents the probability that the model assigns a higher                         predicted probability to a randomly chosen positive case than to a randomly chosen                         negative case
+
+
+WHAT WE ARE GOING TO TRY?
+In this tornado cases the Recall is much important than other values, as we want specially to detect the DANGEROUS ones. For that, we try to balance the model and the files with a similar number of classes
+
+
+
+```{r}
+# We balance it
+# 1. We separate the "High" de los "Low" in the train set
+altos <- tornados_train %>% filter(mag_alta == 1)
+bajos <- tornados_train %>% filter(mag_alta == 0)
+
+n_altos <- nrow(altos)
+n_bajos <- nrow(bajos)
+porcentaje_bajos <- n_bajos / (n_altos+n_bajos)
+print(paste("This is the '%' of LWOW MAGNITUDE", round(porcentaje_bajos * 100, 2), "%"))
+# 95% de datos de tornados que son MAGNITUD BAJA
+
+
+# 2. We select same "Lows" as "High" we have
 set.seed(123)
-class_split <- initial_split(tornados_class, prop = 0.8)
-class_train <- training(class_split)
-class_test  <- testing(class_split)
+bajos_recortados <- bajos %>% sample_n(nrow(altos)) # take as much files of high mag as the files og low mag
 
-# ==========================================
-# RECIPE SPECIFICATION
-# ==========================================
-# Like in the notebooks, define the formula and normalize
-logit_recipe <- recipe(is_deadly ~ mag + len + wid + season + area_sq_mi, data = class_train) %>%
-  step_normalize(all_predictors())
+# 3. We join them. They are in a 50% 50% proportion
+train_balanceado_manual <- bind_rows(altos, bajos_recortados)
 
-# ==========================================
-# MODEL SPECIFICATION
-# ==========================================
-logit_spec <- logistic_reg() %>%
-  set_engine("glm") %>%
-  set_mode("classification")
+# 4. Train the model with this new data
+modelo_balanceado_manual <- glm(mag_alta ~ area_sq_mi_log10 + loss_log10 + victims_total_log10,
+                     data = train_balanceado_manual, family = binomial)
 
-# ==========================================
-# WORKFLOW CREATION
-# ==========================================
-logit_wflow <- workflow() %>%
-  add_recipe(logit_recipe) %>%
-  add_model(logit_spec)
-
-# ==========================================
-# MODEL FITTING
-# ==========================================
-logit_fit <- fit(logit_wflow, data = class_train)
-
-# ==========================================
-# EVALUATION
-# ==========================================
-# We make predicitins in the test data as in the exercises
-logit_predictions <- predict(logit_fit, new_data = class_test) %>%
-  bind_cols(class_test)
-
-conf_matrix <- logit_predictions %>%
-  conf_mat(truth = is_deadly, estimate = .pred_class)
-
-print(conf_matrix)
-
-accuracy_logit <- logit_predictions %>%
-  accuracy(truth = is_deadly, estimate = .pred_class)
-
-print(accuracy_logit)
+summary(modelo_balanceado_manual)
 ```
+
 ```{r}
-# 1. Table with the COnufsion Matrix (hits and fails)
-print(conf_matrix)
+# We follow the same before process
+tornados_test$pred_prob <- predict(modelo_balanceado_manual, newdata = tornados_test, type = "response")
+tornados_test$pred_clase <- ifelse(tornados_test$pred_prob > 0.5, 1, 0)
 
-# 2. Chart more visible
-conf_matrix %>% 
-  autoplot(type = "heatmap") +
-  labs(title = "Confusion Matrix - Logistic Model (is_deadly)")
+# 3. Graficar la matriz de confusión
+eval <- evaluate(
+  data = tornados_test, 
+  target_col = "mag_alta", 
+  prediction_cols = "pred_clase", # En plural
+  type = "binomial"                # ¡Este es el que faltaba!
+)
+
+plot_confusion_matrix(eval)
 ```
 
 
-1. **Can we predict the total number of victims of a tornado** (injuries + fatalities) based on its characteristics (magnitude, path length, width, season, area)?  
-   → Answered with **Linear Regression**.
+```{r}
+reporte_automatico_balanceado <- confusionMatrix(
+  data = as.factor(tornados_test$pred_clase),       # ¡Cambiado a _test!
+  reference = as.factor(tornados_test$mag_alta),    # ¡Cambiado a _test!
+  positive = "1"
+)
 
-2. **Can we predict the total cost of a tornado** based on its characteristics (magnitude, path length, width, season, area)?
-   → Answered with **Linear Regression**.
+# 3. Extraemos e imprimimos solo las métricas clave que necesitas para tu reporte:
+print("--- MÉTRICAS AUTOMÁTICAS DEL MODELO LOGÍSTICO ---")
+print(paste("Exactitud Global (Accuracy):", round(reporte_automatico_balanceado$overall["Accuracy"] * 100, 2), "%"))
+print(paste("Precisión (Precision):", round(reporte_automatico_balanceado$byClass["Precision"] * 100, 2), "%"))
+print(paste("Sensibilidad (Recall / Sensitivity):", round(reporte_automatico_balanceado$byClass["Sensitivity"] * 100, 2), "%"))
+print(paste("F1-Score (Balance):", round(reporte_automatico_balanceado$byClass["F1"], 4)))
+```
+EXPLANATION OF RESULTS:
+In this tornado case, this model would be better because it is more reliable when it predicts a HIGH MAGNITUDE tornado. Is true that it fails more than the other in the other hand: FAKE POSITIVES (it predicts is high but is low)
+Is a different model result but better in this special tornado cases
 
-3. **Can we predict whether a tornado will be deadly** (at least one fatality) based on its characteristics?  
-   → Answered with **Logistic Regression**.
+
+```{r}
+# CONCLUSIONS
+# At this moment we only thougth about the balance, but we did not thjink about the "threshold" of -->
+# > 0.5 = HIGH
+# < 0.5 = LOW
+
+# So we started to think about changing that "threshold", and in our tornado case, is worse prediciting a LOW MAGNTIUDE tornado when actually is HIGH MAGNITUDE because we wont activate ways of prevention.
+
+# In the other case, detecting a HIGH MAGNITUDE tornado, when is LOW MAGNITUDE one is not as bad.
+
+# So in conclusion we prefer FAKE POSITIVES than FAKE NEGATIVES. For that, it would be a proper option lower the threshold.
+
+```
+
+```{r}
+# We now try the same. Balanced 50% 50% but with the optimous threshold calculated by the ROC curve
+
+# 3. Aplicar el nuevo threshold en vez del 0.5
+tornados_test$pred_clase_nueva <- ifelse(
+  tornados_test$pred_prob > threshold_optimo$threshold, 1, 0
+)
+
+# 4. Comparar métricas antiguas (0.5) vs nuevas (threshold óptimo)
+reporte_nuevo <- confusionMatrix(
+  data      = as.factor(tornados_test$pred_clase_nueva),
+  reference = as.factor(tornados_test$mag_alta),
+  positive  = "1"
+)
+
+print("--- CON THRESHOLD 0.5 ---")
+print(paste("Recall:",    round(reporte_automatico$byClass["Sensitivity"] * 100, 2), "%"))
+print(paste("Precision:", round(reporte_automatico$byClass["Precision"]   * 100, 2), "%"))
+print(paste("F1:",        round(reporte_automatico$byClass["F1"], 4)))
+
+print("--- CON THRESHOLD ÓPTIMO ---")
+print(paste("Recall:",    round(reporte_nuevo$byClass["Sensitivity"] * 100, 2), "%"))
+print(paste("Precision:", round(reporte_nuevo$byClass["Precision"]   * 100, 2), "%"))
+print(paste("F1:",        round(reporte_nuevo$byClass["F1"], 4)))
+
+```
+EXPLANATION: Why F1 with optimum threshold is lower than the 0.5 threshold.
+
+Lowering the threshold increased Recall a lot (from 33% to 84%) but reduced Precision (from 71% to 22%), so the F1-score went down. This happens because F1 punishes a low Precision more than it rewards a high Recall. Even so, in this context it may still be the better choice, since missing a dangerous high-magnitude tornado is worse than triggering a false alarm

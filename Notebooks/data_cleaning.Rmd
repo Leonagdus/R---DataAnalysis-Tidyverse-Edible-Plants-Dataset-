@@ -19,7 +19,6 @@ library(tidytuesdayR)
 library(janitor)
 library(skimr)
 library(here)
-#library(tidymodels)
 library(performance)
 library(kableExtra)
 ```
